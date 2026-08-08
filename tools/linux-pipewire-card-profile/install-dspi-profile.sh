@@ -167,10 +167,10 @@ print_dspi_summary() {
 
     echo
     echo "DSPi cards:"
-    run_user_host pactl list cards short | grep -F 'WeebLabs_Weeb_Labs_DSPi' || echo "  (none visible)"
+    run_user_host pactl list cards short | grep -F 'RYNLABS_RYNLABS_DSPi' || echo "  (none visible)"
     echo
     echo "DSPi sinks:"
-    run_user_host pactl list sinks short | grep -F 'WeebLabs_Weeb_Labs_DSPi' || echo "  (none visible)"
+    run_user_host pactl list sinks short | grep -F 'RYNLABS_RYNLABS_DSPi' || echo "  (none visible)"
 }
 
 retrigger_dspi_cards() {

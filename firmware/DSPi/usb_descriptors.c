@@ -23,8 +23,8 @@ char usb_descriptor_str_serial[17] = "0123456789ABCDEF";
 
 static const char *const string_table[] = {
     "",                    // 0 — placeholder; langid returned separately
-    "GitHub.com/WeebLabs", // 1 — manufacturer
-    "Weeb Labs DSPi",      // 2 — product
+    "RYNLABS",             // 1 — manufacturer
+    "RYNLABS DSPi",        // 2 — product
     usb_descriptor_str_serial, // 3 — serial (populated at boot)
 };
 
@@ -97,7 +97,11 @@ static const tusb_desc_device_t device_descriptor = {
 // 182  Std iso feedback EP IN 0x82                     (9 bytes)
 // 191  Vendor std interface (itf 2, class 0xFF, 1 EP)  (9 bytes)
 // 200  Std interrupt EP IN 0x83 (notifications, 4 ms)  (7 bytes)
-// 207  total
+// 207  HID std interface (itf 3, class 0x03, 2 EPs)     (9 bytes)
+// 216  HID descriptor (bcdHID 1.11, 1 report desc)      (9 bytes)
+// 225  Std interrupt EP IN 0x84 (reports)               (7 bytes)
+// 232  Std interrupt EP OUT 0x04 (commands)             (7 bytes)
+// 239  total
 //
 // The offsets above are the RP2040 (stereo-only) layout.  On RP2350 the
 // Feature Unit grows by 6 bytes (8 logical channels instead of 2) and three
@@ -150,12 +154,18 @@ static const tusb_desc_device_t device_descriptor = {
 // Base config length (everything except the optional loopback function):
 //   config(9) + IAD(8) + AC std(9) + AC CS header(9) + input(12) + FU
 //   + output(9) + AS alt0(9) + 2×stereo-alt + N×multichannel-alt + vendor(9)
-//   + notify(7).
+//   + notify(7) + HID function.
+#define HID_FUNCTION_LEN  (9 + 9 + 7 + 7)   // HID if(9) + HID desc(9) + EP IN(7) + EP OUT(7)
+// AD1-style HID report descriptor: vendor usage page, Report ID 0x4B, one
+// 10-byte Output (host→device frames) + one 10-byte Input (device→host
+// replies).  See desc_hid_report[] below.
+#define HID_REPORT_DESC_LEN  24
 #define CONFIG_BASE_LEN  (9 + 8 + 9 + 9 + 12 + UAC1_FU_LEN + 9 \
                           + 9 \
                           + 2 * AS_STEREO_ALT_LEN \
                           + NUM_MULTICH_ALTS * AS_MULTICH_ALT_LEN \
-                          + 9 + 7)
+                          + 9 + 7 \
+                          + HID_FUNCTION_LEN)
 
 #ifdef DSPI_LOOPBACK
 // Loopback capture function appended at the end of the array (debug build):
@@ -578,6 +588,52 @@ const uint8_t usb_config_descriptor[] = {
     0x00,                               // bLockDelayUnits
     U16_TO_U8S_LE(0x0000),              // wLockDelay
 #endif // DSPI_LOOPBACK
+
+    // ========================================================================
+    // AD1-STYLE HID CONTROL FUNCTION
+    //
+    // Vendor-defined HID interface carrying 10-byte AD1 control frames on
+    // Report ID 0x4B (see kiwi_ears_ad1_protocol_spec.md and hid_control.c).
+    // Sits after the vendor function (normal build: itf 3; loopback build:
+    // itf 5).  Uses two interrupt EPs: IN 0x84 for replies, OUT 0x04 for
+    // host commands.  Standard HID class (0x03) so the OS binds hidclass.
+    // ========================================================================
+
+    // --- HID std interface (itf 3/5, class 0x03, 2 EPs) ---
+    9,
+    TUSB_DESC_INTERFACE,
+    ITF_NUM_HID,                        // bInterfaceNumber
+    0x00,                               // bAlternateSetting
+    0x02,                               // bNumEndpoints (IN + OUT)
+    TUSB_CLASS_HID,                     // bInterfaceClass (0x03)
+    0x00,                               // bInterfaceSubClass (0x00 — none)
+    0x00,                               // bInterfaceProtocol (0x00 — none)
+    0x00,                               // iInterface
+
+    // --- HID descriptor (bcdHID 1.11, 1 report descriptor) ---
+    9,
+    0x21,                               // bDescriptorType — HID (0x21)
+    U16_TO_U8S_LE(0x0111),              // bcdHID (1.11)
+    0x00,                               // bCountryCode (not localized)
+    0x01,                               // bNumDescriptors
+    0x22,                               // bDescriptorType — HID Report (0x22)
+    U16_TO_U8S_LE(HID_REPORT_DESC_LEN), // wDescriptorLength
+
+    // --- Std interrupt EP IN 0x84 (device -> host replies) ---
+    7,
+    TUSB_DESC_ENDPOINT,
+    HID_IN_ENDPOINT,                    // bEndpointAddress (0x84)
+    TUSB_XFER_INTERRUPT,                // bmAttributes (0x03)
+    U16_TO_U8S_LE(HID_EP_MAX_PKT),      // wMaxPacketSize (64 — FS interrupt max)
+    HID_EP_INTERVAL_MS,                 // bInterval (1 ms)
+
+    // --- Std interrupt EP OUT 0x04 (host -> device commands) ---
+    7,
+    TUSB_DESC_ENDPOINT,
+    HID_OUT_ENDPOINT,                   // bEndpointAddress (0x04)
+    TUSB_XFER_INTERRUPT,                // bmAttributes (0x03)
+    U16_TO_U8S_LE(HID_EP_MAX_PKT),      // wMaxPacketSize (64)
+    HID_EP_INTERVAL_MS,                 // bInterval (1 ms)
 };
 
 // Catch any miscount in the packed descriptor table at compile time (the array
@@ -735,6 +791,37 @@ uint8_t const *tud_descriptor_device_cb(void) {
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
     return usb_config_descriptor;
+}
+
+// ----------------------------------------------------------------------------
+// AD1-style HID report descriptor
+//
+// Vendor-defined usage page 0xFF00.  One application collection, Report ID
+// 0x4B.  An Output report of 10 bytes carries host→device AD1 frames; an
+// Input report of 10 bytes carries device→host replies.  Both use Data,
+// Variable, Absolute encoding (raw bytes passed straight through — hid_control.c
+// interprets them as AD1 register frames, see kiwi_ears_ad1_protocol_spec.md).
+// ----------------------------------------------------------------------------
+static const uint8_t desc_hid_report[] = {
+    0x06, 0x00, 0xFF,           // Usage Page (Vendor Defined 0xFF00)
+    0x09, 0x01,                 // Usage (Vendor Usage 0x01)
+    0xA1, 0x01,                 // Collection (Application)
+    0x85, HID_RPT_ID,          // Report ID (0x4B)
+    0x75, 0x08,                 // Report Size (8 bits)
+    0x95, 0x0A,                 // Report Count (10)
+    0x09, 0x01,                 // Usage (Vendor Usage 0x01)
+    0x91, 0x02,                 // Output (Data, Var, Abs) — 10-byte frame
+    0x95, 0x0A,                 // Report Count (10)
+    0x09, 0x01,                 // Usage (Vendor Usage 0x01)
+    0x81, 0x02,                 // Input (Data, Var, Abs) — 10-byte frame
+    0xC0,                       // End Collection
+};
+_Static_assert(sizeof(desc_hid_report) == HID_REPORT_DESC_LEN,
+               "desc_hid_report byte count must equal HID_REPORT_DESC_LEN");
+
+uint8_t const *tud_hid_descriptor_report_cb(uint8_t itf) {
+    (void)itf;
+    return desc_hid_report;
 }
 
 static uint16_t string_response[32];

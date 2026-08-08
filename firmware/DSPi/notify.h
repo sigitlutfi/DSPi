@@ -93,6 +93,7 @@ typedef enum {
     PARAM_SRC_UAC1     = 7,  // UAC1 Feature Unit SET_CUR (OS volume slider, mute key)
     PARAM_SRC_UART     = 8,  // External UART control interface
     PARAM_SRC_I2C      = 9,  // External I2C target control interface
+    PARAM_SRC_HID      = 10, // External USB HID control interface (AD1-style frames)
 } ParamSource;
 
 // ---------------------------------------------------------------------------

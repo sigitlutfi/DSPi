@@ -33,7 +33,9 @@ extern "C" {
 #define CFG_TUD_AUDIO           0
 #define CFG_TUD_CDC             0
 #define CFG_TUD_MSC             0
-#define CFG_TUD_HID             0
+// HID: one vendor-defined interface (Report ID 0x4B) carrying AD1-style
+// 10-byte control frames; handled by hid_control.c.
+#define CFG_TUD_HID             1
 #define CFG_TUD_MIDI            0
 #define CFG_TUD_VENDOR          0
 #define CFG_TUD_DFU_RUNTIME     0

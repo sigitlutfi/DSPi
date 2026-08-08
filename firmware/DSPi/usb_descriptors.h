@@ -34,7 +34,9 @@
 // terminal/feature unit + larger iso OUT max-packet.
 // 0x0202 → 0x0203 for the 4ch/6ch input alts + the unified channel model
 // (per-input EQ/metering, wire V16 / slot V21).
-#define USB_BCD_DEVICE  0x0203
+// 0x0203 → 0x0204 for the manufacturer/product rename to RYNLABS (forces
+// Windows to re-read the cached descriptors instead of showing the old name).
+#define USB_BCD_DEVICE  0x0204
 
 // ----------------------------------------------------------------------------
 // ENDPOINT ADDRESSES
@@ -68,6 +70,16 @@
 #define NOTIFY_EP_MAX_PKT       64U
 #define NOTIFY_EP_INTERVAL_MS   0U
 
+// --- AD1-style HID control function -----------------------------------------
+// Vendor-defined HID interface carrying 10-byte AD1 control frames on
+// Report ID 0x4B (see kiwi_ears_ad1_protocol_spec.md and hid_control.c).
+#define HID_IN_ENDPOINT         0x84U
+#define HID_OUT_ENDPOINT        0x04U
+#define HID_EP_MAX_PKT          64U
+#define HID_EP_INTERVAL_MS      1U
+#define HID_RPT_ID              0x4B
+#define HID_CONTROL_ITF_BYTE_LEN 10   // 10-byte AD1 frame (Report ID excluded)
+
 // Notification event type constants are now defined in notify.h
 // (NOTIFY_EVT_IDLE, NOTIFY_EVT_MASTER_VOLUME, NOTIFY_EVT_PARAM_CHANGED, ...).
 // Legacy aliases retained for any code still using the old names.
@@ -87,9 +99,11 @@
 // numbers 0/1/2 are unchanged so normal-build descriptors are unaffected.
 #define ITF_NUM_LOOPBACK_AC     3   // capture AudioControl
 #define ITF_NUM_LOOPBACK_AS     4   // capture AudioStreaming
-#define ITF_NUM_TOTAL           5
+#define ITF_NUM_HID             5   // AD1-style HID control function
+#define ITF_NUM_TOTAL           6
 #else
-#define ITF_NUM_TOTAL           3
+#define ITF_NUM_HID             3   // AD1-style HID control function
+#define ITF_NUM_TOTAL           4
 #endif
 
 // ----------------------------------------------------------------------------

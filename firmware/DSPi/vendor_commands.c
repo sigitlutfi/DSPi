@@ -3873,6 +3873,7 @@ CtrlDispatchResult vendor_dispatch_get(CtrlSource src, uint8_t bRequest,
     _ext_resp_len  = 0;
     _dispatch_src  = (src == CTRL_SOURCE_UART) ? PARAM_SRC_UART
                    : (src == CTRL_SOURCE_I2C)  ? PARAM_SRC_I2C
+                   : (src == CTRL_SOURCE_HID)  ? PARAM_SRC_HID
                    : PARAM_SRC_GPIO;   // CTRL_SOURCE_GPIO (Control Surfaces)
     bool ok = vendor_handle_get(&req);
     notify_set_source(PARAM_SRC_UNKNOWN);
@@ -3931,6 +3932,7 @@ CtrlDispatchResult vendor_dispatch_set(CtrlSource src, uint8_t bRequest,
     _active_source = src;
     _dispatch_src  = (src == CTRL_SOURCE_UART) ? PARAM_SRC_UART
                    : (src == CTRL_SOURCE_I2C)  ? PARAM_SRC_I2C
+                   : (src == CTRL_SOURCE_HID)  ? PARAM_SRC_HID
                    : PARAM_SRC_GPIO;   // CTRL_SOURCE_GPIO (Control Surfaces)
     bool handled = vendor_handle_set_data(&req);
     _active_source = CTRL_SOURCE_USB;

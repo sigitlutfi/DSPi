@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RYNLABS DSPi — WebHID DSP Console</title>
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --card-bg: #131a2b;
+      --card-alt: #0f1626;
+      --border: #26304a;
+      --accent: #22d3ee;
+      --accent-soft: rgba(34, 211, 238, 0.12);
+      --accent-hover: #0ea5c4;
+      --text: #f1f5f9;
+      --text-muted: #8ea0b8;
+      --danger: #fb7185;
+      --success: #34d399;
+      --gold: #fbbf24;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(1000px 500px at 80% -10%, rgba(34, 211, 238, 0.08), transparent 60%),
+        radial-gradient(800px 400px at 0% 110%, rgba(251, 191, 36, 0.05), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      padding: 24px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 6px;
+    }
+
+    .brand-mark {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), #0891b2);
+      color: #03131a;
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: 0.5px;
+      box-shadow: 0 4px 18px rgba(34, 211, 238, 0.35);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 2px;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+    }
+
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--danger);
+    }
+
+    .dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.6);
+    }
+
+    button {
+      background: var(--accent);
+      color: #03131a;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.05s;
+    }
+
+    button:hover {
+      background: var(--accent-hover);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    button.purple {
+      background: linear-gradient(135deg, var(--gold), #d97706);
+      color: #1c1300;
+    }
+
+    button.purple:hover {
+      filter: brightness(1.08);
+    }
+
+    button.secondary {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    button.secondary:hover {
+      background: #31405f;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    input, select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.4px;
+    }
+
+    .status-chip.active {
+      color: #34d399;
+      background: rgba(52, 211, 153, 0.12);
+      border: 1px solid rgba(52, 211, 153, 0.35);
+    }
+
+    .status-chip.bypassed {
+      color: #fb7185;
+      background: rgba(251, 113, 133, 0.12);
+      border: 1px solid rgba(251, 113, 133, 0.35);
+    }
+
+    .status-chip.unknown {
+      color: var(--text-muted);
+      background: rgba(148, 163, 184, 0.12);
+      border: 1px solid var(--border);
+    }
+
+    .peq-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 0.85rem;
+    }
+
+    .peq-table th, .peq-table td {
+      border: 1px solid var(--border);
+      padding: 7px 6px;
+      text-align: center;
+    }
+
+    .peq-table th {
+      background: var(--card-alt);
+      color: var(--accent);
+      font-size: 0.78rem;
+      letter-spacing: 0.3px;
+    }
+
+    .peq-table td input, .peq-table td select {
+      padding: 5px;
+      font-size: 0.85rem;
+    }
+
+    .peq-table tr:nth-child(even) td {
+      background: rgba(255, 255, 255, 0.015);
+    }
+
+    .peq-table td code {
+      background: var(--card-alt);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 0.78rem;
+      color: var(--gold);
+    }
+
+    .log-box {
+      background: #070b14;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      font-family: "Cascadia Code", Consolas, "JetBrains Mono", monospace;
+      font-size: 0.78rem;
+      height: 260px;
+      overflow-y: auto;
+      color: var(--accent);
+    }
+
+    .log-entry {
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+
+    .log-entry.err {
+      color: var(--danger);
+    }
+    .log-entry.rx {
+      color: var(--success);
+    }
+    .log-entry.tx {
+      color: var(--gold);
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .card-head h3 {
+      font-size: 1rem;
+      color: var(--text);
+    }
+
+    .card-head .hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    @media (max-width: 800px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      body { padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">
+      <div class="brand-mark">RL</div>
+      <div>
+        <h1>RYNLABS DSPi</h1>
+        <p class="subtitle">WebHID DSP Console — 10-Band Parametric EQ over the KTMicro 10-byte AD1 protocol</p>
+      </div>
+    </div>
+
+    <!-- Connection Card -->
+    <div class="card">
+      <div class="status-bar">
+        <div class="status-badge">
+          <span id="statusDot" class="dot"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+        <div class="btn-row">
+          <button id="btnConnect">Connect RYNLABS DSPi (WebHID)</button>
+          <button id="btnDisconnect" class="secondary" disabled>Disconnect</button>
+        </div>
+      </div>
+      <div id="deviceInfo" style="margin-top: 12px; font-size: 0.85rem; color: var(--text-muted);">
+        No device attached. Click Connect to select your RYNLABS DSPi.
+      </div>
+    </div>
+
+    <!-- Controls Card -->
+    <div class="card">
+      <div class="card-head">
+        <h3>Global Controls</h3>
+        <span class="hint">Preamp &amp; PEQ master switch</span>
+      </div>
+      <div class="grid-2">
+        <div>
+          <div class="form-group">
+            <label>Master Preamp Gain (dB) — Reg 0x3B:</label>
+            <div class="btn-row">
+              <input type="number" id="inputPreamp" value="0" step="1.5" min="-19.5" max="3" style="max-width: 120px;">
+              <button id="btnSetPreamp">Write Preamp</button>
+              <button id="btnReadPreamp" class="secondary">Read</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Master PEQ Enable / Bypass — Reg 0x24:</label>
+            <div class="btn-row">
+              <button id="btnEnablePeq" class="purple" style="font-size: 0.75rem;">Enable PEQ</button>
+              <button id="btnBypassPeq" class="secondary" style="font-size: 0.75rem;">Bypass PEQ</button>
+              <span id="peqStatus" class="status-chip unknown">PEQ: UNKNOWN</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style="display: flex; flex-direction: column; gap: 12px; height: 100%; justify-content: center;">
+            <button id="btnPullAll" class="purple" style="width: 100%;">Pull All 10 Bands + Preamp from DAC</button>
+            <button id="btnCommit" style="width: 100%;">Commit / Save to Flash (Cmd 0x53)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PEQ Bands Card -->
+    <div class="card">
+      <div class="card-head">
+        <h3>10-Band Parametric EQ (Regs 0x26 - 0x39)</h3>
+        <span class="hint">Per-band: filter type, freq, gain, Q</span>
+      </div>
+      <table class="peq-table">
+        <thead>
+          <tr>
+            <th>Band</th>
+            <th>Regs (Freq/Gain · Q/Type)</th>
+            <th>Filter Type</th>
+            <th>Frequency (Hz)</th>
+            <th>Gain (dB)</th>
+            <th>Q Factor</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="peqTableBody">
+          <!-- Generated JS -->
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Log Console Card -->
+    <div class="card">
+      <div class="card-head">
+        <h3>Raw 10-Byte HID Log (Report ID 0x4B = 75)</h3>
+        <button id="btnClearLog" class="secondary" style="padding: 4px 10px; font-size: 0.75rem;">Clear Log</button>
+      </div>
+      <div id="logConsole" class="log-box"></div>
+    </div>
+  </div>
+
+  <script>
+    // --- Protocol constants (KTMicro AD1 10-byte frame, Report ID 0x4B) ---
+    const REPORT_ID = 0x4B;
+    const CMD_READ = 0x52;    // 'R'
+    const CMD_WRITE = 0x57;   // 'W'
+    const CMD_COMMIT = 0x53;  // 'S'
+    const BASE_REG_OFFSET = 0x26;
+    const NUM_BANDS = 10;
+
+    // AD1 filter-type enum -> DSPi FilterType (see hid_control.c)
+    const FILTER_TYPES = [
+      { id: 'PK',   val: 0x00, label: 'Peaking (PK)' },
+      { id: 'LSQ',  val: 0x03, label: 'Low Shelf (LSQ)' },
+      { id: 'HSQ',  val: 0x04, label: 'High Shelf (HSQ)' },
+      { id: 'FLAT', val: 0x10, label: 'Flat (FLAT)' },
+      { id: 'LP',   val: 0x11, label: 'Low-pass (LP)' },
+      { id: 'HP',   val: 0x12, label: 'High-pass (HP)' },
+      { id: 'NOTCH',val: 0x13, label: 'Notch' },
+      { id: 'AP',   val: 0x14, label: 'All-pass (AP)' },
+      { id: 'AP1',  val: 0x15, label: 'All-pass 1st (AP1)' },
+      { id: 'LSQ1', val: 0x16, label: 'Low Shelf 1st (LSQ1)' },
+      { id: 'HSQ1', val: 0x17, label: 'High Shelf 1st (HSQ1)' },
+      { id: 'LT',   val: 0x18, label: 'Linkwitz-Transform (LT)' },
+      { id: 'LP1',  val: 0x19, label: 'Low-pass 1st (LP1)' },
+      { id: 'HP1',  val: 0x1A, label: 'High-pass 1st (HP1)' }
+    ];
+
+    // Kiwi Ears AD1 master preamp discrete step table (-19.5..+3.0 dB, 1.5 dB step)
+    const PREAMP_STEPS = [-19.5, -18.0, -16.5, -15.0, -13.5, -12.0, -10.5, -9.0, -7.5, -6.0, -4.5, -3.0, -1.5, 0.0, 1.5, 3.0];
+
+    let device = null;
+    let pendingCommands = [];
+
+    // --- UI elements ---
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const deviceInfo = document.getElementById('deviceInfo');
+    const logConsole = document.getElementById('logConsole');
+    const peqTableBody = document.getElementById('peqTableBody');
+
+    function log(msg, type = 'info') {
+      const time = new Date().toISOString().substring(11, 19);
+      const div = document.createElement('div');
+      div.className = `log-entry ${type}`;
+      div.textContent = `[${time}] ${msg}`;
+      logConsole.appendChild(div);
+      logConsole.scrollTop = logConsole.scrollHeight;
+    }
+
+    function delay(ms) {
+      return new Promise(res => setTimeout(res, ms));
+    }
+
+    function toHexStr(uint8Arr) {
+      return Array.from(uint8Arr).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+    }
+
+    function setPeqStatus(rawByte, labelOnly = false) {
+      const el = document.getElementById('peqStatus');
+      if (rawByte === undefined || rawByte === null) {
+        el.textContent = 'PEQ: UNKNOWN';
+        el.className = 'status-chip unknown';
+        return null;
+      }
+      const on = rawByte !== 0;
+      el.textContent = `PEQ: ${on ? 'ACTIVE' : 'BYPASSED'}`;
+      el.className = on ? 'status-chip active' : 'status-chip bypassed';
+      if (!labelOnly) log(`PEQ Switch (Reg 0x24) = ${on ? 'ACTIVE' : 'BYPASSED'}`, 'rx');
+      return on;
+    }
+
+    // --- Response matching ---
+    // Replies echo the frame's reg (byte 0) and CMD (byte 4).  Match on BOTH so
+    // a WRITE ACK (0x57) can never satisfy a pending READ (0x52) — the earlier
+    // build fell back to (reg + subCmd) where subCmd is always 0, which made the
+    // WRITE ACK's status byte 0x03 get mistaken for the READ result.
+    function matchResponse(p, data) {
+      return p.reg === data[0] && p.cmd === data[4];
+    }
+
+    function registerReportHandler(dev) {
+      if (dev._reportHandlerRegistered) return;
+      dev.addEventListener("inputreport", (event) => {
+        const data = new Uint8Array(event.data.buffer);
+        log(`RX (Report 0x${event.reportId.toString(16)}): ${toHexStr(data)}`, 'rx');
+
+        const index = pendingCommands.findIndex(p => matchResponse(p, data));
+        if (index !== -1) {
+          const p = pendingCommands.splice(index, 1)[0];
+          clearTimeout(p.timeout);
+          p.resolve(data);
+        }
+      });
+      dev._reportHandlerRegistered = true;
+    }
+
+    function waitForResponse(reg, cmd, timeoutMs = 1000) {
+      registerReportHandler(device);
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          const index = pendingCommands.findIndex(p => p.resolve === resolve);
+          if (index !== -1) pendingCommands.splice(index, 1);
+          reject(new Error(`Timeout waiting for response (Reg: 0x${reg.toString(16)}, CMD: 0x${cmd.toString(16)})`));
+        }, timeoutMs);
+        pendingCommands.push({ reg, cmd, resolve, reject, timeout });
+      });
+    }
+
+    async function sendCommandWithResponse(packet, timeoutMs = 1000) {
+      if (!device || !device.opened) throw new Error("Device not connected");
+      const reg = packet[0];
+      const cmd = packet[4];
+      const responsePromise = waitForResponse(reg, cmd, timeoutMs);
+      log(`TX (ReportID 0x4B): ${toHexStr(packet)}`, 'tx');
+      await device.sendReport(REPORT_ID, packet);
+      return responsePromise;
+    }
+
+    async function sendReportFireAndForget(packet) {
+      if (!device || !device.opened) throw new Error("Device not connected");
+      log(`TX (ReportID 0x4B): ${toHexStr(packet)}`, 'tx');
+      await device.sendReport(REPORT_ID, packet);
+    }
+
+    // --- 10-byte packet builders ---
+    function buildReadPacket(regId) {
+      return new Uint8Array([regId, 0x00, 0x00, 0x00, CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    function buildWriteGainFreqPacket(regId, freq, gain) {
+      let g = Math.round(gain * 10);
+      if (g < 0) g += 0x10000;
+      const gLow = g & 0xFF;
+      const gHigh = (g >> 8) & 0xFF;
+      const fLow = freq & 0xFF;
+      const fHigh = (freq >> 8) & 0xFF;
+      return new Uint8Array([regId, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, gLow, gHigh, fLow, fHigh]);
+    }
+
+    function buildWriteQPacket(regId, q, typeVal) {
+      const qVal = Math.round(q * 1000);
+      const qLow = qVal & 0xFF;
+      const qHigh = (qVal >> 8) & 0xFF;
+      return new Uint8Array([regId, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, qLow, qHigh, typeVal, 0x00]);
+    }
+
+    function buildCommitPacket() {
+      return new Uint8Array([0x00, 0x00, 0x00, 0x00, CMD_COMMIT, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    function buildWritePreampPacket(gainDb) {
+      const clampedDb = Math.max(-19.5, Math.min(3.0, gainDb));
+      const stepIndex = Math.max(0, Math.min(15, Math.round((clampedDb / 1.5) + 13)));
+      return new Uint8Array([0x3B, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, stepIndex & 0xFF, 0x00, 0x00, 0x00]);
+    }
+
+    function buildReadPreampPacket() {
+      return new Uint8Array([0x3B, 0x00, 0x00, 0x00, CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    function buildPeqEnablePacket(on) {
+      return new Uint8Array([0x24, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, on ? 0x01 : 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    function typeValToId(val) {
+      const f = FILTER_TYPES.find(t => t.val === val);
+      return f ? f.id : 'PK';
+    }
+
+    function typeIdToVal(id) {
+      const f = FILTER_TYPES.find(t => t.id === id);
+      return f ? f.val : 0x00;
+    }
+
+    async function readPeqStatus() {
+      const resp = await sendCommandWithResponse(buildReadPacket(0x24));
+      return setPeqStatus(resp[6]);
+    }
+
+    // --- PEQ table (10 bands) ---
+    function initPeqTable() {
+      peqTableBody.innerHTML = '';
+      for (let i = 0; i < NUM_BANDS; i++) {
+        const gainFreqId = BASE_REG_OFFSET + (i * 2);
+        const qId = gainFreqId + 1;
+        const tr = document.createElement('tr');
+
+        const typeOptions = FILTER_TYPES.map(t =>
+          `<option value="${t.id}">${t.label}</option>`).join('');
+
+        tr.innerHTML = `
+          <td><strong>${i + 1}</strong></td>
+          <td><code>0x${gainFreqId.toString(16).toUpperCase()}</code> · <code>0x${qId.toString(16).toUpperCase()}</code></td>
+          <td><select id="type_${i}">${typeOptions}</select></td>
+          <td><input type="number" id="freq_${i}" value="${100 * (i + 1)}" min="20" max="20000" step="1"></td>
+          <td><input type="number" id="gain_${i}" value="0.0" step="0.5" min="-24" max="24"></td>
+          <td><input type="number" id="q_${i}" value="1.41" step="0.05" min="0.1" max="20"></td>
+          <td><button onclick="writeBand(${i})">Write Band ${i + 1}</button></td>
+        `;
+        peqTableBody.appendChild(tr);
+      }
+    }
+
+    window.writeBand = async function(index) {
+      try {
+        const gainFreqId = BASE_REG_OFFSET + (index * 2);
+        const qId = gainFreqId + 1;
+
+        const typeId = document.getElementById(`type_${index}`).value;
+        const freq = parseInt(document.getElementById(`freq_${index}`).value);
+        const gain = parseFloat(document.getElementById(`gain_${index}`).value);
+        const q = parseFloat(document.getElementById(`q_${index}`).value);
+
+        log(`Writing Band ${index + 1}: Freq=${freq}Hz, Gain=${gain}dB, Q=${q}, Type=${typeId}...`, 'info');
+
+        // Write Freq & Gain
+        const packet1 = buildWriteGainFreqPacket(gainFreqId, freq, gain);
+        await sendCommandWithResponse(packet1);
+        await delay(20);
+
+        // Write Q & Filter Type
+        const packet2 = buildWriteQPacket(qId, q, typeIdToVal(typeId));
+        await sendCommandWithResponse(packet2);
+
+        log(`Band ${index + 1} written successfully! Click Commit to save to Flash.`, 'rx');
+      } catch (err) {
+        log(`Write Band ${index + 1} failed: ${err.message}`, 'err');
+      }
+    };
+
+    // --- Event handlers ---
+    btnConnect.addEventListener('click', async () => {
+      try {
+        const devices = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x2E8B, productId: 0xFEAA }] });
+        if (devices.length === 0) return;
+
+        device = devices[0];
+        await device.open();
+
+        statusDot.classList.add('connected');
+        statusText.textContent = `Connected: ${device.productName || 'RYNLABS DSPi'}`;
+        deviceInfo.textContent = `VID: 0x2E8B | PID: 0xFEAA | Product: ${device.productName} | WebHID Report ID 0x4B (75) Active`;
+
+        btnConnect.disabled = true;
+        btnDisconnect.disabled = false;
+
+        registerReportHandler(device);
+        log(`Connected to ${device.productName} via WebHID (Report ID 0x4B)! Listener active.`, 'rx');
+      } catch (err) {
+        log(`Connection Error: ${err.message}`, 'err');
+      }
+    });
+
+    btnDisconnect.addEventListener('click', async () => {
+      if (device) {
+        await device.close();
+        device = null;
+      }
+      pendingCommands = [];
+      statusDot.classList.remove('connected');
+      statusText.textContent = 'Disconnected';
+      deviceInfo.textContent = 'No device attached.';
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+      setPeqStatus(null);
+      log('Disconnected.', 'info');
+    });
+
+    document.getElementById('btnSetPreamp').addEventListener('click', async () => {
+      try {
+        const val = parseFloat(document.getElementById('inputPreamp').value);
+        log(`Setting Preamp (Reg 0x3B) to ${val} dB...`, 'info');
+        await sendCommandWithResponse(buildWritePreampPacket(val));
+        log('Preamp written successfully!', 'rx');
+      } catch (err) {
+        log(`Set Preamp failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnCommit').addEventListener('click', async () => {
+      try {
+        log('Sending Commit (Cmd 0x53) to flash NVRAM memory...', 'info');
+        await sendCommandWithResponse(buildCommitPacket());
+        log('Commit sent! Settings permanently saved to RYNLABS DSPi.', 'rx');
+      } catch (err) {
+        log(`Commit failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnEnablePeq').addEventListener('click', async () => {
+      try {
+        log('Enabling PEQ (Reg 0x24 = 0x01)...', 'info');
+        await sendCommandWithResponse(buildPeqEnablePacket(true));
+        await readPeqStatus();
+      } catch (err) {
+        log(`Enable PEQ failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnBypassPeq').addEventListener('click', async () => {
+      try {
+        log('Bypassing PEQ (Reg 0x24 = 0x00)...', 'info');
+        await sendCommandWithResponse(buildPeqEnablePacket(false));
+        await readPeqStatus();
+      } catch (err) {
+        log(`Bypass PEQ failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnReadPreamp').addEventListener('click', async () => {
+      try {
+        const resp = await sendCommandWithResponse(buildReadPreampPacket());
+        const rawByte = Math.max(0, Math.min(15, resp[6]));
+        const pregain = PREAMP_STEPS[rawByte].toFixed(1);
+        document.getElementById('inputPreamp').value = pregain;
+        log(`Read Preamp (Reg 0x3B Index ${rawByte}) = ${pregain} dB`, 'rx');
+      } catch (err) {
+        log(`Read Reg 0x3B failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnPullAll').addEventListener('click', async () => {
+      try {
+        log('Pulling 10 PEQ Bands and Preamp from RYNLABS DSPi...', 'info');
+
+        // Master PEQ switch
+        await readPeqStatus();
+
+        // Preamp
+        const preampResp = await sendCommandWithResponse(buildReadPreampPacket());
+        const rawByte = Math.max(0, Math.min(15, preampResp[6]));
+        const pregain = PREAMP_STEPS[rawByte].toFixed(1);
+        document.getElementById('inputPreamp').value = pregain;
+        log(`Preamp (Reg 0x3B Index ${rawByte}) = ${pregain} dB`, 'rx');
+
+        // All bands
+        for (let i = 0; i < NUM_BANDS; i++) {
+          const gainFreqId = BASE_REG_OFFSET + (i * 2);
+          const qId = gainFreqId + 1;
+
+          const resp1 = await sendCommandWithResponse(buildReadPacket(gainFreqId));
+          const gainRaw = resp1[6] | (resp1[7] << 8);
+          const gainSigned = gainRaw > 0x7FFF ? gainRaw - 0x10000 : gainRaw;
+          const gain = (gainSigned / 10.0).toFixed(1);
+          const freq = resp1[8] + (resp1[9] << 8);
+
+          const resp2 = await sendCommandWithResponse(buildReadPacket(qId));
+          const qVal = ((resp2[6] + (resp2[7] << 8)) / 1000.0).toFixed(2);
+          const typeId = typeValToId(resp2[8]);
+
+          document.getElementById(`type_${i}`).value = typeId;
+          document.getElementById(`freq_${i}`).value = freq;
+          document.getElementById(`gain_${i}`).value = gain;
+          document.getElementById(`q_${i}`).value = qVal;
+
+          log(`Band ${i + 1} (Reg 0x${gainFreqId.toString(16)}/0x${qId.toString(16)}): Type=${typeId}, Freq=${freq}Hz, Gain=${gain}dB, Q=${qVal}`, 'rx');
+          await delay(20);
+        }
+      } catch (err) {
+        log(`Pull All failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnClearLog').addEventListener('click', () => {
+      logConsole.innerHTML = '';
+    });
+
+    initPeqTable();
+  </script>
+</body>
+</html>

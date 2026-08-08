@@ -40,6 +40,9 @@ typedef enum {
                             // wire transport.  The Control Surfaces tick dispatches
                             // through vendor_dispatch_get/set with this source so its
                             // writes are tagged PARAM_SRC_GPIO.
+    CTRL_SOURCE_HID  = 4,   // external USB HID control interface (AD1-style frames);
+                            // dispatches from tud_hid_set_report_cb (main loop) so its
+                            // writes are tagged PARAM_SRC_HID.
 } CtrlSource;
 
 typedef enum {

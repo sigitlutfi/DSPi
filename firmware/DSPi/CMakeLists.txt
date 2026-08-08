@@ -43,6 +43,8 @@ add_executable(DSPi
     flash_storage.h
     i2c_control.c
     i2c_control.h
+    hid_control.c
+    hid_control.h
     i2s_input.c
     i2s_input.h
     input_servo.c
@@ -56,6 +58,8 @@ add_executable(DSPi
     main.c
     notify.c
     notify.h
+    oled.c
+    oled.h
     pdm_generator.c
     pdm_generator.h
     psybass.c
@@ -64,6 +68,7 @@ add_executable(DSPi
     siggen.h
     spdif_input.c
     spdif_input.h
+    ssd1306.c
     uart_control.c
     uart_control.h
     upmix.c

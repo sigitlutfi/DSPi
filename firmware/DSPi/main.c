@@ -24,6 +24,7 @@
 #include "spdif_rx.h"
 #include "lg_sound_sync.h"
 #include "dac_hw_mute.h"
+#include "oled.h"
 #include "dsp_pipeline.h"
 #include "crossover.h"
 #include "flash_clkdiv.h"
@@ -35,6 +36,7 @@
 #include "siggen.h"
 #include "upmix.h"
 #include "usb_audio.h"
+#include "hid_control.h"
 #include "notify.h"
 #include "uart_control.h"
 #include "i2c_control.h"
@@ -1942,6 +1944,12 @@ int main(void) {
 
     core0_init();
 
+    // OLED display (SSD1306 over I2C0, GPIO 4/5) — shows the hello-world
+    // splash; content lives in its own framebuffer and is throttled by
+    // oled_tick() below.  Order here is after core0_init() so the final
+    // system clock (and any clock-divisor wrappers) is already active.
+    oled_init();
+
     // Enable watchdog
     watchdog_enable(8000, 1);
 
@@ -1961,6 +1969,12 @@ int main(void) {
         // usbd_edpt_xfer from within a control-transfer DATA stage.
         usb_notify_tick();
 
+        // Transmit any queued AD1 HID replies (interrupt EP IN).  The HID
+        // class holds a single in-flight report, so WRITE+READ responses
+        // arriving back-to-back need this deferred drain or the second one is
+        // dropped while the EP is busy.
+        hid_control_tick();
+
         // External control transports: parse any complete UART/I2C frames
         // and dispatch them through the shared vendor-command surface.
         // Both are cheap no-ops while disabled and never block; heavy work
@@ -1977,6 +1991,10 @@ int main(void) {
         // and post-clock-restart release holds on schedule.  Two loads +
         // branches when no deadline is in flight (the steady state).
         dac_hw_mute_tick();
+
+        // OLED display tick — throttled push of the framebuffer to the
+        // SSD1306; cheap no-op while the display content is unchanged.
+        oled_tick();
 
         // Control Surfaces poll: debounce buttons/switches, decode encoders,
         // read pots, drive LEDs.  Internally throttled to 1 kHz; immediate
