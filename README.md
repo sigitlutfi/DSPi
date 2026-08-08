@@ -806,6 +806,24 @@ In-depth specs for each subsystem are kept under [`Documentation/Features/`](Doc
 
 ---
 
+## Custom Modifications (Fork)
+
+This fork (`github.com/sigitlutfi/DSPi`) adds the following changes on top of the upstream WeebLabs firmware:
+
+*   **DSP Effects over HID / Vendor Requests:** New vendor registers `0x50` – `0x67` bridge the four DSP effects — crossfeed, loudness compensation, psybass, and volume leveller — onto the transport-neutral vendor REQ surface. All effect registers are **global** (not scoped by the `0x40` channel-select register). Scope clamping: crossfeed `0x01`, loudness/psybass `0x0003`, leveller `0x03`/`0x03`. Wire shape: byte = 1B, mask = u16 LE, float = f32 LE. See `hid_expansion_plan.md` and `rynlabs_dspi_hid_protocol_spec_v2.md`. Implementation: `firmware/DSPi/hid_control.c`.
+*   **Web HID Console:** Browser-based control panel that talks to the DSPi over WebHID — no host app installation needed. Two variants:
+    *   `web_hid_console_v2.html` — full-featured console (Alpine.js, register reads/writes for preamp, volume, PEQ bands, effects block, commit/load/save).
+    *   `web_hid_poc.html` — lightweight proof-of-concept with the same DSP Effects card (regs `0x50` – `0x67`).
+    *   Requires a Chromium browser with WebHID enabled and a secure context (`file://` or HTTPS).
+*   **OLED Slideshow Enhancements:** `firmware/DSPi/oled.c` / `oled.h`
+    *   Added a third slideshow page showing live **effects status** (`CF` crossfeed, `LD` loudness, `PB` psybass, `LV` leveller with their current parameters).
+    *   Page index is now decoupled from the EQ band slice index (`oled_eq_page_count()` vs `oled_page_count()`).
+    *   Slideshow title rows use an inverted (highlight) style.
+    *   Slideshow rotation is currently **disabled** in `oled_tick()` (the display holds on the selected page) to avoid a brief audio pop caused by the I²C flush blocking the main audio-drain loop. Page navigation is available via `oled_set_page()`.
+*   **Rebranding:** USB audio device name changed to **RYNLABS** branding.
+
+---
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
