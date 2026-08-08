@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RYNLABS DSPi — WebHID Console v2</title>
+  <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0f1a; --card: #131a2b; --alt: #0f1626; --line: #26304a;
+      --accent: #22d3ee; --accent2: #0891b2; --text: #f1f5f9; --mut: #8ea0b8;
+      --ok: #34d399; --warn: #fbbf24; --err: #fb7185; --gold: #fbbf24;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(1000px 500px at 80% -10%, rgba(34,211,238,.08), transparent 60%),
+        radial-gradient(800px 400px at 0% 110%, rgba(251,191,36,.05), transparent 60%),
+        var(--bg);
+      color: var(--text); padding: 20px; line-height: 1.5; min-height: 100vh;
+    }
+    [x-cloak] { display: none !important; }
+    .container { max-width: 1180px; margin: 0 auto; }
+
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .mark {
+      width: 38px; height: 38px; flex-shrink: 0; display: grid; place-items: center;
+      border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #03131a; font-weight: 800; box-shadow: 0 4px 18px rgba(34,211,238,.35);
+    }
+    h1 { font-size: 1.35rem; color: var(--accent); letter-spacing: .4px; }
+    .subtitle { color: var(--mut); font-size: .85rem; }
+
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap; }
+    .card-head h3 { font-size: .95rem; }
+    .hint { font-size: .75rem; color: var(--mut); }
+
+    .statusbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); display: inline-block; margin-right: 6px; }
+    .dot.on { background: var(--ok); box-shadow: 0 0 10px rgba(52,211,153,.6); }
+
+    .btn {
+      background: var(--accent); color: #03131a; border: none; padding: 7px 14px;
+      border-radius: 8px; font-weight: 600; cursor: pointer; transition: filter .15s;
+    }
+    .btn:hover { filter: brightness(1.1); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn.sec { background: var(--line); color: var(--text); }
+    .btn.purple { background: linear-gradient(135deg, var(--gold), #d97706); color: #1c1300; }
+    .btn.sm { padding: 4px 10px; font-size: .75rem; }
+    .btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .grid4 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 980px) { .grid2, .grid4 { grid-template-columns: 1fr; } }
+
+    .eff-card { background: var(--alt); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .eff-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .eff-head strong { color: var(--accent); font-size: .9rem; }
+    .eff-regs { color: var(--gold); font-size: .7rem; font-weight: 600; margin-left: 6px; }
+    .eff-actions { display: flex; align-items: center; gap: 8px; }
+
+    .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .row { display: flex; justify-content: space-between; align-items: center; font-size: .8rem; color: var(--mut); }
+    .row em { font-style: normal; }
+    .row .val { color: var(--accent); font-weight: 700; font-size: .95rem; font-variant-numeric: tabular-nums; }
+    .slider-row { display: grid; grid-template-columns: 1fr 96px; gap: 10px; align-items: center; }
+    input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+    input[type=number], select {
+      background: var(--bg); border: 1px solid var(--line); color: var(--text);
+      border-radius: 8px; padding: 6px; font-size: .85rem; width: 100%;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(34,211,238,.12); }
+    .num { font-variant-numeric: tabular-nums; }
+
+    .chip {
+      font-size: .7rem; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--mut); background: rgba(148,163,184,.08);
+    }
+    .chip.on { color: var(--ok); border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.12); }
+    .chip.off { color: var(--err); border-color: rgba(251,113,133,.4); background: rgba(251,113,133,.12); }
+    .chip.pin { color: var(--gold); border-color: rgba(251,191,36,.4); background: rgba(251,191,36,.1); }
+    .pin { font-size: .72rem; color: var(--mut); border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 8px; }
+    .pin .chip { margin-right: 6px; }
+
+    .switch { position: relative; display: inline-block; width: 40px; height: 22px; vertical-align: middle; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch-slider {
+      position: absolute; inset: 0; background: var(--line); border-radius: 22px; transition: .2s; cursor: pointer;
+    }
+    .switch-slider:before {
+      content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px;
+      background: var(--mut); border-radius: 50%; transition: .2s;
+    }
+    .switch input:checked + .switch-slider { background: var(--accent); }
+    .switch input:checked + .switch-slider:before { transform: translateX(18px); background: #03131a; }
+    .switch-label { font-size: .78rem; color: var(--mut); display: inline-flex; align-items: center; gap: 6px; }
+
+    table.peq { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .peq th, .peq td { border: 1px solid var(--line); padding: 6px; text-align: center; }
+    .peq th { background: var(--alt); color: var(--accent); font-size: .72rem; letter-spacing: .2px; }
+    .peq td .slider-row { grid-template-columns: 1fr 70px; gap: 6px; }
+    .peq .band-no { font-weight: 700; color: var(--accent); }
+    .peq code { background: var(--alt); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-size: .68rem; color: var(--gold); }
+    .peq tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+
+    .log-box {
+      background: #070b14; border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+      font-family: "Cascadia Code", Consolas, monospace; font-size: .75rem; height: 240px; overflow-y: auto;
+    }
+    .log-entry { margin-bottom: 3px; word-break: break-all; }
+    .log-entry.tx { color: var(--gold); }
+    .log-entry.rx { color: var(--ok); }
+    .log-entry.ok { color: var(--ok); }
+    .log-entry.warn { color: var(--warn); }
+    .log-entry.err { color: var(--err); }
+    .log-entry.info { color: var(--accent); }
+    .muted { color: var(--mut); font-size: .78rem; }
+  </style>
+</head>
+<body x-data="dspiApp()" x-cloak>
+  <div class="container">
+
+    <div class="brand">
+      <div class="mark">RL</div>
+      <div>
+        <h1>RYNLABS DSPi — WebHID Console v2</h1>
+        <p class="subtitle">10-band PEQ + DSP Effects (crossfeed · loudness · psybass · leveller) — slider dengan clamping bawaan &amp; verifikasi read-back</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="statusbar">
+        <div>
+          <span class="dot" :class="connected ? 'on' : ''"></span>
+          <span x-text="connected ? ('Connected: ' + productName) : 'Disconnected'"></span>
+        </div>
+        <div class="btn-row">
+          <button class="btn" x-on:click="connect()" :disabled="connected || connecting" x-text="connecting ? 'Connecting…' : 'Connect RYNLABS DSPi (WebHID)'"></button>
+          <button class="btn sec" x-on:click="disconnect()" :disabled="!connected">Disconnect</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:10px" x-text="deviceInfo || 'No device attached. Klik Connect untuk memilih RYNLABS DSPi (VID 0x2E8B / PID 0xFEAA).'"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Global</h3>
+        <span class="hint">PEQ bypass (0x24) · Preamp (0x3B) · Volume master (0x41) · Mute (0x42)</span>
+      </div>
+      <div class="grid2">
+        <div>
+          <div class="field">
+            <div class="row">
+              <span>Preamp <em>dB</em></span>
+              <span class="val" x-text="g.preampDb.toFixed(1)"></span>
+            </div>
+            <div class="slider-row">
+              <input type="range" min="-19.5" max="3" step="1.5" :value="g.preampDb"
+                     x-on:input="onRange(0x3B, g, 'preampDb', $event.target.value, true)"
+                     x-on:change="onRangeDone(0x3B, g, 'preampDb', 'Preamp', $event.target.value)">
+              <input class="num" type="number" min="-19.5" max="3" step="1.5" x-model.number="g.preampDb"
+                     x-on:change="onNum(0x3B, g, 'preampDb', $event.target.value)">
+            </div>
+          </div>
+          <div class="field">
+            <div class="row">
+              <span>Master Volume <em>dB (0 = maks, −128 = mute sentinel)</em></span>
+              <span class="val" x-text="g.volDb.toFixed(1)"></span>
+            </div>
+            <div class="slider-row">
+              <input type="range" min="-60" max="0" step="0.5" :value="g.volDb"
+                     x-on:input="onRange(0x41, g, 'volDb', $event.target.value, true)"
+                     x-on:change="onRangeDone(0x41, g, 'volDb', 'Volume', $event.target.value)">
+              <input class="num" type="number" min="-128" max="0" step="0.5" x-model.number="g.volDb"
+                     x-on:change="onNum(0x41, g, 'volDb', $event.target.value)">
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px;justify-content:center">
+          <div class="row">
+            <span class="switch-label">
+              <label class="switch">
+                <input type="checkbox" :checked="g.peqEnabled" x-on:change="togglePeq($event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              PEQ Active (0x24)
+            </span>
+            <span class="chip" :class="g.peqEnabled ? 'on' : 'off'" x-text="g.peqEnabled ? 'ACTIVE' : 'BYPASS'"></span>
+          </div>
+          <div class="row">
+            <span class="switch-label">
+              <label class="switch">
+                <input type="checkbox" :checked="g.mute" x-on:change="setMute($event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              Mute (0x42)
+            </span>
+            <span class="chip" :class="g.mute ? 'on' : 'off'" x-text="g.mute ? 'MUTED' : 'OK'"></span>
+          </div>
+          <div class="btn-row">
+            <button class="btn purple" x-on:click="pullAll()" :disabled="busy!==''">Pull All (48 regs)</button>
+            <button class="btn" x-on:click="commit()" :disabled="busy!==''">Commit ke Flash (0x53)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>10-Band PEQ (0x26 – 0x39)</h3>
+        <span class="switch-label">
+          <label class="switch">
+            <input type="checkbox" x-model="liveApply">
+            <span class="switch-slider"></span>
+          </label>
+          Live tulis saat slider digeser
+        </span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="peq">
+          <thead>
+            <tr>
+              <th>Band</th>
+              <th>Regs</th>
+              <th>Type</th>
+              <th>Freq (Hz)</th>
+              <th>Gain (dB)</th>
+              <th>Q</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(b, i) in band" :key="'b' + i">
+              <tr>
+                <td class="band-no" x-text="i + 1"></td>
+                <td>
+                  <code x-text="'0x' + (0x26 + i * 2).toString(16).toUpperCase()"></code>
+                  ·
+                  <code x-text="'0x' + (0x27 + i * 2).toString(16).toUpperCase()"></code>
+                </td>
+                <td>
+                  <select x-model="b.type" x-on:change="onBandType(i)">
+                    <template x-for="t in FILTER_TYPES" :key="t.id">
+                      <option :value="t.id" x-text="t.label"></option>
+                    </template>
+                  </select>
+                </td>
+                <td>
+                  <div class="slider-row">
+                    <input type="range" min="0" max="1000" :value="freqSlider(b.freq)"
+                           x-on:input="onBandFreq(i, $event.target.value)"
+                           x-on:change="onBandDone(i)">
+                    <input class="num" type="number" min="20" max="20000" step="1" x-model.number="b.freq"
+                           x-on:change="onBandNum(i, 'freq', $event.target.value)">
+                  </div>
+                </td>
+                <td>
+                  <div class="slider-row">
+                    <input type="range" min="-24" max="24" step="0.5" :value="b.gain"
+                           x-on:input="onBandGainQ(i, $event.target.value, 'gain')"
+                           x-on:change="onBandDone(i)">
+                    <input class="num" type="number" min="-24" max="24" step="0.5" x-model.number="b.gain"
+                           x-on:change="onBandNum(i, 'gain', $event.target.value)">
+                  </div>
+                </td>
+                <td>
+                  <div class="slider-row">
+                    <input type="range" min="0.1" max="20" step="0.05" :value="b.q"
+                           x-on:input="onBandGainQ(i, $event.target.value, 'q')"
+                           x-on:change="onBandDone(i)">
+                    <input class="num" type="number" min="0.1" max="20" step="0.05" x-model.number="b.q"
+                           x-on:change="onBandNum(i, 'q', $event.target.value)">
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>DSP Effects (0x50 – 0x67)</h3>
+        <span class="hint">Scope: input ch0/1 · output slot 1 (0/1). Mask dikunci sesuai scope firmware — nilai clamp dijamin.</span>
+      </div>
+      <div class="grid4">
+
+        <div class="eff-card">
+          <div class="eff-head">
+            <div><strong>Crossfeed<span class="eff-regs">0x50–0x55</span></strong></div>
+            <div class="eff-actions">
+              <span class="chip" :class="chips.crossfeed ? 'on' : 'off'" x-text="chips.crossfeed ? 'ON' : 'OFF'"></span>
+              <label class="switch">
+                <input type="checkbox" :checked="cf.enable" x-on:change="toggleEnable('crossfeed', $event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              <button class="btn sm" x-on:click="applyEffect('crossfeed')" :disabled="busy!==''">Apply</button>
+              <button class="btn sm sec" x-on:click="pullBlock('crossfeed')" :disabled="busy!==''">Pull</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row">
+              <span>Preset (0x51)</span>
+              <select x-model.number="cf.preset" x-on:change="onSelect(0x51, cf, 'preset', $event.target.value)">
+                <option value="0">0 · DEFAULT (700 Hz / 4.5 dB)</option>
+                <option value="1">1 · CHUMOY (700 Hz / 6.0 dB)</option>
+                <option value="2">2 · MEIER (650 Hz / 9.5 dB)</option>
+                <option value="3">3 · CUSTOM</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Custom Freq (0x52) <em>Hz</em></span><span class="val" x-text="cf.freq.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="500" max="2000" step="10" :value="cf.freq"
+                     x-on:input="onRange(0x52, cf, 'freq', $event.target.value)"
+                     x-on:change="onRangeDone(0x52, cf, 'freq', 'CF freq', $event.target.value)">
+              <input class="num" type="number" min="500" max="2000" step="10" x-model.number="cf.freq"
+                     x-on:change="onNum(0x52, cf, 'freq', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Custom Feed (0x53) <em>dB</em></span><span class="val" x-text="cf.feed.toFixed(1)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="0" max="15" step="0.5" :value="cf.feed"
+                     x-on:input="onRange(0x53, cf, 'feed', $event.target.value)"
+                     x-on:change="onRangeDone(0x53, cf, 'feed', 'CF feed', $event.target.value)">
+              <input class="num" type="number" min="0" max="15" step="0.5" x-model.number="cf.feed"
+                     x-on:change="onNum(0x53, cf, 'feed', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="row">
+            <span class="switch-label">
+              <label class="switch">
+                <input type="checkbox" :checked="cf.itd" x-on:change="onCheck(0x54, cf, 'itd', $event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              ITD Enable (0x54)
+            </span>
+          </div>
+
+          <div class="pin"><span class="chip pin">0x55 mask</span> Dikunci 0x01 (pair 0 — slot 1). Freq/Feed hanya aktif saat preset = CUSTOM.</div>
+        </div>
+
+        <div class="eff-card">
+          <div class="eff-head">
+            <div><strong>Loudness Comp.<span class="eff-regs">0x56–0x59</span></strong></div>
+            <div class="eff-actions">
+              <span class="chip" :class="chips.loudness ? 'on' : 'off'" x-text="chips.loudness ? 'ON' : 'OFF'"></span>
+              <label class="switch">
+                <input type="checkbox" :checked="loud.enable" x-on:change="toggleEnable('loudness', $event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              <button class="btn sm" x-on:click="applyEffect('loudness')" :disabled="busy!==''">Apply</button>
+              <button class="btn sm sec" x-on:click="pullBlock('loudness')" :disabled="busy!==''">Pull</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Ref SPL (0x57) <em>dB</em></span><span class="val" x-text="loud.ref.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="40" max="100" step="1" :value="loud.ref"
+                     x-on:input="onRange(0x57, loud, 'ref', $event.target.value)"
+                     x-on:change="onRangeDone(0x57, loud, 'ref', 'Loud ref', $event.target.value)">
+              <input class="num" type="number" min="40" max="100" step="1" x-model.number="loud.ref"
+                     x-on:change="onNum(0x57, loud, 'ref', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Intensity (0x58) <em>%</em></span><span class="val" x-text="loud.intensity.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="0" max="200" step="5" :value="loud.intensity"
+                     x-on:input="onRange(0x58, loud, 'intensity', $event.target.value)"
+                     x-on:change="onRangeDone(0x58, loud, 'intensity', 'Loud intensity', $event.target.value)">
+              <input class="num" type="number" min="0" max="200" step="5" x-model.number="loud.intensity"
+                     x-on:change="onNum(0x58, loud, 'intensity', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="pin"><span class="chip pin">0x59 mask</span> Dikunci 0x0003 (outputs 0/1). Ubah 0x57/0x58 memicu recompute tabel koefisien asinkron.</div>
+        </div>
+
+        <div class="eff-card">
+          <div class="eff-head">
+            <div><strong>Psybass<span class="eff-regs">0x5A–0x60</span></strong></div>
+            <div class="eff-actions">
+              <span class="chip" :class="chips.psybass ? 'on' : 'off'" x-text="chips.psybass ? 'ON' : 'OFF'"></span>
+              <label class="switch">
+                <input type="checkbox" :checked="psy.enable" x-on:change="toggleEnable('psybass', $event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              <button class="btn sm" x-on:click="applyEffect('psybass')" :disabled="busy!==''">Apply</button>
+              <button class="btn sm sec" x-on:click="pullBlock('psybass')" :disabled="busy!==''">Pull</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Cutoff (0x5B) <em>Hz</em></span><span class="val" x-text="psy.cutoff.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="30" max="300" step="1" :value="psy.cutoff"
+                     x-on:input="onRange(0x5B, psy, 'cutoff', $event.target.value)"
+                     x-on:change="onRangeDone(0x5B, psy, 'cutoff', 'Psy cutoff', $event.target.value)">
+              <input class="num" type="number" min="30" max="300" step="1" x-model.number="psy.cutoff"
+                     x-on:change="onNum(0x5B, psy, 'cutoff', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Harmonics (0x5C) <em>dB</em></span><span class="val" x-text="psy.harm.toFixed(1)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="-24" max="12" step="1" :value="psy.harm"
+                     x-on:input="onRange(0x5C, psy, 'harm', $event.target.value)"
+                     x-on:change="onRangeDone(0x5C, psy, 'harm', 'Psy harmonics', $event.target.value)">
+              <input class="num" type="number" min="-24" max="12" step="1" x-model.number="psy.harm"
+                     x-on:change="onNum(0x5C, psy, 'harm', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Drive (0x5D) <em>dB</em></span><span class="val" x-text="psy.drive.toFixed(1)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="0" max="18" step="1" :value="psy.drive"
+                     x-on:input="onRange(0x5D, psy, 'drive', $event.target.value)"
+                     x-on:change="onRangeDone(0x5D, psy, 'drive', 'Psy drive', $event.target.value)">
+              <input class="num" type="number" min="0" max="18" step="1" x-model.number="psy.drive"
+                     x-on:change="onNum(0x5D, psy, 'drive', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Character (0x5E) <em>%</em></span><span class="val" x-text="psy.char.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="0" max="100" step="5" :value="psy.char"
+                     x-on:input="onRange(0x5E, psy, 'char', $event.target.value)"
+                     x-on:change="onRangeDone(0x5E, psy, 'char', 'Psy character', $event.target.value)">
+              <input class="num" type="number" min="0" max="100" step="5" x-model.number="psy.char"
+                     x-on:change="onNum(0x5E, psy, 'char', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Original (0x5F) <em>dB</em></span><span class="val" x-text="psy.orig.toFixed(1)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="-60" max="0" step="1" :value="psy.orig"
+                     x-on:input="onRange(0x5F, psy, 'orig', $event.target.value)"
+                     x-on:change="onRangeDone(0x5F, psy, 'orig', 'Psy original', $event.target.value)">
+              <input class="num" type="number" min="-60" max="0" step="1" x-model.number="psy.orig"
+                     x-on:change="onNum(0x5F, psy, 'orig', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="pin"><span class="chip pin">0x60 mask</span> Dikunci 0x0003 (outputs 0/1).</div>
+        </div>
+
+        <div class="eff-card">
+          <div class="eff-head">
+            <div><strong>Volume Leveller<span class="eff-regs">0x61–0x67</span></strong></div>
+            <div class="eff-actions">
+              <span class="chip" :class="chips.leveller ? 'on' : 'off'" x-text="chips.leveller ? 'ON' : 'OFF'"></span>
+              <label class="switch">
+                <input type="checkbox" :checked="lev.enable" x-on:change="toggleEnable('leveller', $event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              <button class="btn sm" x-on:click="applyEffect('leveller')" :disabled="busy!==''">Apply</button>
+              <button class="btn sm sec" x-on:click="pullBlock('leveller')" :disabled="busy!==''">Pull</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Amount (0x62) <em>%</em></span><span class="val" x-text="lev.amount.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="0" max="100" step="5" :value="lev.amount"
+                     x-on:input="onRange(0x62, lev, 'amount', $event.target.value)"
+                     x-on:change="onRangeDone(0x62, lev, 'amount', 'Lev amount', $event.target.value)">
+              <input class="num" type="number" min="0" max="100" step="5" x-model.number="lev.amount"
+                     x-on:change="onNum(0x62, lev, 'amount', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row">
+              <span>Speed (0x63)</span>
+              <select x-model.number="lev.speed" x-on:change="onSelect(0x63, lev, 'speed', $event.target.value)">
+                <option value="0">0 · SLOW (musik)</option>
+                <option value="1">1 · MEDIUM (umum)</option>
+                <option value="2">2 · FAST (ucapan)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Max Gain (0x64) <em>dB</em></span><span class="val" x-text="lev.maxgain.toFixed(1)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="0" max="35" step="1" :value="lev.maxgain"
+                     x-on:input="onRange(0x64, lev, 'maxgain', $event.target.value)"
+                     x-on:change="onRangeDone(0x64, lev, 'maxgain', 'Lev max gain', $event.target.value)">
+              <input class="num" type="number" min="0" max="35" step="1" x-model.number="lev.maxgain"
+                     x-on:change="onNum(0x64, lev, 'maxgain', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="row"><span>Gate (0x66) <em>dBFS</em></span><span class="val" x-text="lev.gate.toFixed(0)"></span></div>
+            <div class="slider-row">
+              <input type="range" min="-96" max="0" step="1" :value="lev.gate"
+                     x-on:input="onRange(0x66, lev, 'gate', $event.target.value)"
+                     x-on:change="onRangeDone(0x66, lev, 'gate', 'Lev gate', $event.target.value)">
+              <input class="num" type="number" min="-96" max="0" step="1" x-model.number="lev.gate"
+                     x-on:change="onNum(0x66, lev, 'gate', $event.target.value)">
+            </div>
+          </div>
+
+          <div class="row">
+            <span class="switch-label">
+              <label class="switch">
+                <input type="checkbox" :checked="lev.look" x-on:change="onCheck(0x65, lev, 'look', $event.target.checked)">
+                <span class="switch-slider"></span>
+              </label>
+              Lookahead (0x65)
+            </span>
+          </div>
+
+          <div class="pin"><span class="chip pin">0x67 mask</span> Dikunci det 0x03 / apply 0x03 (inputs 0/1). Enable memicu reset state envelope.</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Raw 10-Byte HID Log (Report ID 0x4B = 75)</h3>
+        <button class="btn sec sm" x-on:click="logLines = []">Clear Log</button>
+      </div>
+      <div class="log-box" x-ref="logbox">
+        <template x-for="(l, i) in logLines" :key="i">
+          <div class="log-entry" :class="'log-entry ' + l.cls" x-text="l.msg"></div>
+        </template>
+      </div>
+    </div>
+
+    <div class="muted" style="text-align:center;padding-bottom:20px">
+      Frame 10 byte · Report ID 0x4B · Format: byte (1B), u16 LE mask (2B), float32 LE (4B), int16 0.1dB (2B).
+      Clamp sisi UI mencerminkan clamp scope firmware (lihat spec §4/§8). Butuh Chrome/Edge + secure context (file:// atau https).
+    </div>
+  </div>
+
+  <script>
+    function dspiApp() {
+      return {
+        REPORT_ID: 0x4B,
+        CMD_READ: 0x52,
+        CMD_WRITE: 0x57,
+        CMD_COMMIT: 0x53,
+        EN_REG: { crossfeed: 0x50, loudness: 0x56, psybass: 0x5A, leveller: 0x61 },
+
+        FILTER_TYPES: [
+          { id: 'PK', val: 0x00, label: 'Peaking (PK)' },
+          { id: 'LSQ', val: 0x03, label: 'Low Shelf (LSQ)' },
+          { id: 'HSQ', val: 0x04, label: 'High Shelf (HSQ)' },
+          { id: 'FLAT', val: 0x10, label: 'Flat (FLAT)' },
+          { id: 'LP', val: 0x11, label: 'Low-pass (LP)' },
+          { id: 'HP', val: 0x12, label: 'High-pass (HP)' },
+          { id: 'NOTCH', val: 0x13, label: 'Notch' },
+          { id: 'AP', val: 0x14, label: 'All-pass (AP)' },
+          { id: 'AP1', val: 0x15, label: 'All-pass 1st (AP1)' },
+          { id: 'LSQ1', val: 0x16, label: 'Low Shelf 1st (LSQ1)' },
+          { id: 'HSQ1', val: 0x17, label: 'High Shelf 1st (HSQ1)' },
+          { id: 'LP1', val: 0x19, label: 'Low-pass 1st (LP1)' },
+          { id: 'HP1', val: 0x1A, label: 'High-pass 1st (HP1)' }
+        ],
+        PREAMP_STEPS: [-19.5, -18.0, -16.5, -15.0, -13.5, -12.0, -10.5, -9.0, -7.5, -6.0, -4.5, -3.0, -1.5, 0.0, 1.5, 3.0],
+
+        CLAMP: {
+          0x3B: { min: -19.5, max: 3 },
+          0x50: { min: 0, max: 1 }, 0x51: { min: 0, max: 3 },
+          0x52: { min: 500, max: 2000 }, 0x53: { min: 0, max: 15 }, 0x54: { min: 0, max: 1 },
+          0x56: { min: 0, max: 1 }, 0x57: { min: 40, max: 100 }, 0x58: { min: 0, max: 200 },
+          0x5A: { min: 0, max: 1 }, 0x5B: { min: 30, max: 300 }, 0x5C: { min: -24, max: 12 },
+          0x5D: { min: 0, max: 18 }, 0x5E: { min: 0, max: 100 }, 0x5F: { min: -60, max: 0 },
+          0x61: { min: 0, max: 1 }, 0x62: { min: 0, max: 100 }, 0x63: { min: 0, max: 2 },
+          0x64: { min: 0, max: 35 }, 0x65: { min: 0, max: 1 }, 0x66: { min: -96, max: 0 },
+          0x41: { min: -128, max: 0 }
+        },
+        KIND: {
+          0x52: 'float', 0x53: 'float', 0x57: 'float', 0x58: 'float',
+          0x5B: 'float', 0x5C: 'float', 0x5D: 'float', 0x5E: 'float', 0x5F: 'float',
+          0x62: 'float', 0x64: 'float', 0x66: 'float',
+          0x59: 'u16', 0x60: 'u16', 0x67: 'u16',
+          0x41: 's16'
+        },
+
+        connected: false,
+        connecting: false,
+        busy: '',
+        device: null,
+        productName: '',
+        deviceInfo: '',
+        pending: [],
+        logLines: [],
+        _timers: {},
+        liveApply: true,
+
+        g: { peqEnabled: false, preampDb: 0, volDb: 0, mute: false },
+        cf: { enable: false, preset: 0, freq: 700, feed: 4.5, itd: true },
+        loud: { enable: false, ref: 87, intensity: 100 },
+        psy: { enable: false, cutoff: 80, harm: 0, drive: 6, char: 50, orig: 0 },
+        lev: { enable: false, amount: 50, speed: 0, maxgain: 15, look: true, gate: -96 },
+        band: Array.from({ length: 10 }, (_, i) => ({ type: 'PK', freq: 100 * (i + 1), gain: 0, q: 1.41 })),
+        chips: { crossfeed: false, loudness: false, psybass: false, leveller: false },
+
+        init() {
+          if (!navigator.hid) {
+            this.log('WebHID tidak tersedia — butuh Chrome/Edge + secure context (file:// atau https).', 'err');
+          }
+        },
+
+        delay(ms) { return new Promise(r => setTimeout(r, ms)); },
+
+        toHex(u8) {
+          return Array.from(u8).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+        },
+
+        log(msg, cls = 'info') {
+          if (this.logLines.length > 500) this.logLines.splice(0, this.logLines.length - 400);
+          this.logLines.push({ msg: '[' + new Date().toISOString().substring(11, 19) + '] ' + msg, cls });
+          this.$nextTick(() => {
+            const el = this.$refs.logbox;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        },
+
+        clampNum(v, min, max) { return Math.min(max, Math.max(min, v)); },
+
+        normField(reg, raw) {
+          const c = this.CLAMP[reg];
+          let n = Number(raw);
+          if (Number.isNaN(n)) n = c ? c.min : 0;
+          if (!c) return n;
+          const o = n;
+          n = this.clampNum(n, c.min, c.max);
+          if (reg === 0x3B) n = this.PREAMP_STEPS[Math.round((n / 1.5) + 13)];
+          if (n !== o) this.log('0x' + reg.toString(16) + ' clamp ' + o + ' → ' + n, 'warn');
+          return n;
+        },
+
+        kindOf(reg) { return this.KIND[reg] || 'byte'; },
+
+        typeIdToVal(id) { const f = this.FILTER_TYPES.find(t => t.id === id); return f ? f.val : 0x00; },
+        typeValToId(v) { const f = this.FILTER_TYPES.find(t => t.val === v); return f ? f.id : 'PK'; },
+
+        freqSlider(f) {
+          const l1 = Math.log10(20), l2 = Math.log10(20000);
+          return Math.round(((Math.log10(f) - l1) / (l2 - l1)) * 1000);
+        },
+        freqFromSlider(v) {
+          const l1 = Math.log10(20), l2 = Math.log10(20000);
+          return Math.round(Math.pow(10, l1 + (v / 1000) * (l2 - l1)));
+        },
+
+        requireDevice() {
+          if (!this.connected) { this.log('Belum terhubung ke DSPi — klik Connect dulu.', 'warn'); return false; }
+          return true;
+        },
+
+        registerReportHandler(dev) {
+          if (dev._rlHid) return;
+          dev._rlHid = true;
+          dev.addEventListener('inputreport', (ev) => {
+            const data = new Uint8Array(ev.data.buffer);
+            this.log('RX 0x' + ev.reportId.toString(16) + ': ' + this.toHex(data), 'rx');
+            const i = this.pending.findIndex(p => p.reg === data[0] && p.cmd === data[4]);
+            if (i !== -1) {
+              const p = this.pending.splice(i, 1)[0];
+              clearTimeout(p.t);
+              p.resolve(data);
+            }
+          });
+        },
+
+        async _send(pkt, wantReply = true, timeoutMs = 1200) {
+          if (!this.device || !this.device.opened) throw new Error('Perangkat tidak terhubung');
+          this.log('TX : ' + this.toHex(pkt), 'tx');
+          if (!wantReply) { await this.device.sendReport(this.REPORT_ID, pkt); return null; }
+          const reg = pkt[0], cmd = pkt[4];
+          const res = new Promise((resolve, reject) => {
+            const t = setTimeout(() => {
+              const j = this.pending.findIndex(p => p.resolve === resolve);
+              if (j !== -1) this.pending.splice(j, 1);
+              reject(new Error('Timeout 0x' + reg.toString(16) + '/0x' + cmd.toString(16)));
+            }, timeoutMs);
+            this.pending.push({ reg, cmd, resolve, reject, t });
+          });
+          await this.device.sendReport(this.REPORT_ID, pkt);
+          return res;
+        },
+
+        readPkt(reg) { return new Uint8Array([reg, 0, 0, 0, this.CMD_READ, 0, 0, 0, 0, 0]); },
+        bytePkt(reg, v) { return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, v & 0xFF, 0, 0, 0]); },
+        u16Pkt(reg, v) { return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, v & 0xFF, (v >> 8) & 0xFF, 0, 0]); },
+        s16Pkt(reg, v) {
+          const x = Math.round(v * 10) & 0xFFFF;
+          return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, x & 0xFF, (x >> 8) & 0xFF, 0, 0]);
+        },
+        floatPkt(reg, v) {
+          const b = new Uint8Array(new ArrayBuffer(4));
+          new DataView(b.buffer).setFloat32(0, v, true);
+          return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, b[0], b[1], b[2], b[3]]);
+        },
+        gfPkt(reg, freq, gain) {
+          let g = Math.round(gain * 10);
+          if (g < 0) g += 0x10000;
+          return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, g & 0xFF, (g >> 8) & 0xFF, freq & 0xFF, (freq >> 8) & 0xFF]);
+        },
+        qtPkt(reg, q, type) {
+          const qv = Math.round(q * 1000);
+          return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, qv & 0xFF, (qv >> 8) & 0xFF, type, 0]);
+        },
+        commitPkt() { return new Uint8Array([0, 0, 0, 0, this.CMD_COMMIT, 0, 0, 0, 0, 0]); },
+
+        async writeReg(reg, v) {
+          let pkt;
+          if (reg === 0x3B) {
+            const idx = Math.round((this.clampNum(v, -19.5, 3) / 1.5) + 13);
+            pkt = this.bytePkt(reg, Math.max(0, Math.min(15, idx)));
+          } else if (reg >= 0x26 && reg <= 0x39) {
+            throw new Error('Gunakan writeBand untuk register PEQ');
+          } else {
+            const k = this.kindOf(reg);
+            if (k === 'float') pkt = this.floatPkt(reg, v);
+            else if (k === 'u16') pkt = this.u16Pkt(reg, v);
+            else if (k === 's16') pkt = this.s16Pkt(reg, v);
+            else pkt = this.bytePkt(reg, Math.round(v));
+          }
+          const r = await this._send(pkt);
+          if (r && r[6] !== 0x03) throw new Error('Reg 0x' + reg.toString(16) + ' ditolak (status 0x00)');
+          return r;
+        },
+
+        async readReg(reg) {
+          const r = await this._send(this.readPkt(reg));
+          if (reg >= 0x26 && reg <= 0x39) {
+            if (reg % 2 === 0) {
+              const g = r[6] | (r[7] << 8);
+              const sg = g > 0x7FFF ? g - 0x10000 : g;
+              return { gain: sg / 10, freq: r[8] | (r[9] << 8) };
+            }
+            return { q: (r[6] | (r[7] << 8)) / 1000, type: this.typeValToId(r[8]) };
+          }
+          const k = this.kindOf(reg);
+          if (k === 'float') return new DataView(r.buffer, r.byteOffset + 6, 4).getFloat32(0, true);
+          if (k === 'u16') return r[6] | (r[7] << 8);
+          if (k === 's16') { const w = r[6] | (r[7] << 8); return (w > 0x7FFF ? w - 0x10000 : w) / 10; }
+          if (reg === 0x3B) return this.PREAMP_STEPS[Math.max(0, Math.min(15, r[6]))];
+          return r[6];
+        },
+
+        async verify(reg, expected, label, tol = 1e-6) {
+          try {
+            const actual = await this.readReg(reg);
+            const ok = Math.abs(actual - expected) <= tol;
+            this.log('VERIFY ' + label + ' (0x' + reg.toString(16) + '): ' + expected + ' → ' + actual + (ok ? ' ✓' : ' ✗ MISMATCH'), ok ? 'ok' : 'err');
+            return actual;
+          } catch (e) {
+            this.log('VERIFY ' + label + ' gagal: ' + e.message, 'err');
+          }
+        },
+
+        scheduleW(reg, fn) {
+          clearTimeout(this._timers['r' + reg]);
+          this._timers['r' + reg] = setTimeout(async () => {
+            try { await fn(); } catch (e) { this.log('Write gagal: ' + e.message, 'err'); }
+          }, 160);
+        },
+
+        onRange(reg, obj, key, raw, always = false) {
+          if (!this.requireDevice()) return;
+          obj[key] = this.normField(reg, raw);
+          if (!always && !this.liveApply) return;
+          this.scheduleW(reg, () => this.writeReg(reg, obj[key]));
+        },
+
+        onRangeDone(reg, obj, key, label, raw) {
+          if (!this.requireDevice()) return;
+          obj[key] = this.normField(reg, raw !== undefined ? raw : obj[key]);
+          clearTimeout(this._timers['r' + reg]);
+          this.writeReg(reg, obj[key])
+            .then(() => this.verify(reg, obj[key], label))
+            .catch(e => this.log(label + ' gagal: ' + e.message, 'err'));
+        },
+
+        onNum(reg, obj, key, raw) {
+          if (!this.requireDevice()) return;
+          const v = this.normField(reg, raw);
+          obj[key] = v;
+          this.writeReg(reg, v)
+            .then(() => this.verify(reg, v, key))
+            .catch(e => this.log(key + ' gagal: ' + e.message, 'err'));
+        },
+
+        onSelect(reg, obj, key, raw) {
+          if (!this.requireDevice()) return;
+          const v = this.normField(reg, raw);
+          obj[key] = v;
+          this.writeReg(reg, v)
+            .then(() => this.verify(reg, v, key))
+            .catch(e => this.log(key + ' gagal: ' + e.message, 'err'));
+        },
+
+        onCheck(reg, obj, key, checked) {
+          if (!this.requireDevice()) return;
+          obj[key] = checked;
+          const v = checked ? 1 : 0;
+          this.writeReg(reg, v)
+            .then(() => this.verify(reg, v, key))
+            .catch(e => this.log(key + ' gagal: ' + e.message, 'err'));
+        },
+
+        async toggleEnable(name, checked) {
+          if (!this.requireDevice()) return;
+          const key = { crossfeed: 'cf', loudness: 'loud', psybass: 'psy', leveller: 'lev' }[name];
+          this[key].enable = checked;
+          const v = checked ? 1 : 0;
+          try {
+            await this.writeReg(this.EN_REG[name], v);
+            await this.verify(this.EN_REG[name], v, 'Enable ' + name);
+            this.chips[name] = checked;
+          } catch (e) {
+            this[key].enable = !checked;
+            this.log(name + ' toggle gagal: ' + e.message, 'err');
+          }
+        },
+
+        async togglePeq(checked) {
+          if (!this.requireDevice()) return;
+          this.g.peqEnabled = checked;
+          try {
+            await this.writeReg(0x24, checked ? 1 : 0);
+            await this.verify(0x24, checked ? 1 : 0, 'PEQ enable');
+          } catch (e) {
+            this.g.peqEnabled = !checked;
+            this.log('PEQ toggle gagal: ' + e.message, 'err');
+          }
+        },
+
+        async setMute(checked) {
+          if (!this.requireDevice()) return;
+          this.g.mute = checked;
+          try {
+            await this.writeReg(0x42, checked ? 1 : 0);
+            await this.verify(0x42, checked ? 1 : 0, 'Mute');
+          } catch (e) {
+            this.g.mute = !checked;
+            this.log('Mute gagal: ' + e.message, 'err');
+          }
+        },
+
+        async applyEffect(name) {
+          if (!this.requireDevice()) return;
+          const plan = {
+            crossfeed: [
+              [0x51, () => this.cf.preset], [0x52, () => this.cf.freq], [0x53, () => this.cf.feed],
+              [0x54, () => this.cf.itd ? 1 : 0], [0x55, () => 0x01]
+            ],
+            loudness: [
+              [0x57, () => this.loud.ref], [0x58, () => this.loud.intensity], [0x59, () => 0x0003]
+            ],
+            psybass: [
+              [0x5B, () => this.psy.cutoff], [0x5C, () => this.psy.harm], [0x5D, () => this.psy.drive],
+              [0x5E, () => this.psy.char], [0x5F, () => this.psy.orig], [0x60, () => 0x0003]
+            ],
+            leveller: [
+              [0x62, () => this.lev.amount], [0x63, () => this.lev.speed], [0x64, () => this.lev.maxgain],
+              [0x65, () => this.lev.look ? 1 : 0], [0x66, () => this.lev.gate], [0x67, () => 0x0303]
+            ]
+          };
+          const regs = plan[name];
+          if (!regs) return;
+          this.busy = name;
+          try {
+            for (const [reg, get] of regs) {
+              await this.writeReg(reg, this.normField(reg, get()));
+              await this.delay(15);
+            }
+            this.log(name + ' applied → pull back untuk verifikasi...', 'info');
+            await this.pullBlock(name);
+          } catch (e) {
+            this.log(name + ' apply gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async pullBlock(name) {
+          const map = {
+            crossfeed: { key: 'cf', enReg: 0x50, fields: [[0x51, 'preset'], [0x52, 'freq'], [0x53, 'feed'], [0x54, 'itd']] },
+            loudness: { key: 'loud', enReg: 0x56, fields: [[0x57, 'ref'], [0x58, 'intensity']] },
+            psybass: { key: 'psy', enReg: 0x5A, fields: [[0x5B, 'cutoff'], [0x5C, 'harm'], [0x5D, 'drive'], [0x5E, 'char'], [0x5F, 'orig']] },
+            leveller: { key: 'lev', enReg: 0x61, fields: [[0x62, 'amount'], [0x63, 'speed'], [0x64, 'maxgain'], [0x65, 'look'], [0x66, 'gate']] }
+          };
+          const m = map[name];
+          if (!m || !this.requireDevice()) return;
+          this.busy = name;
+          try {
+            const on = (await this.readReg(m.enReg)) !== 0;
+            this[m.key].enable = on;
+            this.chips[name] = on;
+            for (const [reg, f] of m.fields) {
+              const v = await this.readReg(reg);
+              this[m.key][f] = v;
+              this.log('0x' + reg.toString(16) + ' ' + name + '.' + f + ' = ' + v, 'rx');
+              await this.delay(15);
+            }
+            this.log(name + ' pulled.', 'ok');
+          } catch (e) {
+            this.log(name + ' pull gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async pullGlobal() {
+          this.g.peqEnabled = (await this.readReg(0x24)) !== 0;
+          this.g.preampDb = await this.readReg(0x3B);
+          this.g.volDb = await this.readReg(0x41);
+          this.g.mute = (await this.readReg(0x42)) !== 0;
+          this.log('Globals pulled (0x24/0x3B/0x41/0x42).', 'ok');
+        },
+
+        async pullBands() {
+          for (let i = 0; i < 10; i++) {
+            const gf = 0x26 + i * 2, qr = gf + 1;
+            const g = await this.readReg(gf);
+            const q = await this.readReg(qr);
+            this.band[i].freq = g.freq;
+            this.band[i].gain = g.gain;
+            this.band[i].q = q.q;
+            this.band[i].type = q.type;
+            await this.delay(15);
+          }
+          this.log('10 bands pulled.', 'ok');
+        },
+
+        async pullAll() {
+          if (!this.requireDevice()) return;
+          this.busy = 'pull';
+          try {
+            await this.pullGlobal();
+            await this.pullBands();
+            for (const n of ['crossfeed', 'loudness', 'psybass', 'leveller']) await this.pullBlock(n);
+            this.log('Full pull selesai.', 'ok');
+          } catch (e) {
+            this.log('pullAll gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        scheduleBand(i) {
+          clearTimeout(this._timers['band' + i]);
+          this._timers['band' + i] = setTimeout(() => this.writeBand(i), 180);
+        },
+
+        onBandFreq(i, raw) {
+          if (!this.requireDevice()) return;
+          this.band[i].freq = this.freqFromSlider(raw);
+          this.scheduleBand(i);
+        },
+
+        onBandGainQ(i, raw, key) {
+          if (!this.requireDevice()) return;
+          let n = Number(raw);
+          if (Number.isNaN(n)) n = 0;
+          if (key === 'gain') n = this.clampNum(n, -24, 24);
+          if (key === 'q') n = this.clampNum(n, 0.1, 20);
+          this.band[i][key] = n;
+          this.scheduleBand(i);
+        },
+
+        onBandNum(i, key, raw) {
+          if (!this.requireDevice()) return;
+          let n = Number(raw);
+          if (Number.isNaN(n)) n = 0;
+          if (key === 'freq') n = Math.round(this.clampNum(n, 20, 20000));
+          if (key === 'gain') n = this.clampNum(n, -24, 24);
+          if (key === 'q') n = this.clampNum(n, 0.1, 20);
+          this.band[i][key] = n;
+          this.scheduleBand(i);
+        },
+
+        onBandType(i) {
+          if (!this.requireDevice()) return;
+          this.scheduleBand(i);
+        },
+
+        async writeBand(i) {
+          const b = this.band[i];
+          b.freq = Math.round(this.clampNum(b.freq, 20, 20000));
+          b.gain = this.clampNum(b.gain, -24, 24);
+          b.q = this.clampNum(b.q, 0.1, 20);
+          const gf = 0x26 + i * 2, qr = gf + 1;
+          await this._send(this.gfPkt(gf, b.freq, b.gain));
+          await this._send(this.qtPkt(qr, b.q, this.typeIdToVal(b.type)));
+          this.log('Band ' + (i + 1) + ' ditulis (' + b.type + ', ' + b.freq + ' Hz, ' + b.gain + ' dB, Q ' + b.q + ').', 'ok');
+        },
+
+        async verifyBand(i) {
+          const gf = 0x26 + i * 2, qr = gf + 1;
+          const g = await this.readReg(gf);
+          const q = await this.readReg(qr);
+          const b = this.band[i];
+          const ok = Math.abs(g.gain - b.gain) <= 0.11 && g.freq === b.freq && Math.abs(q.q - b.q) <= 0.005 && q.type === b.type;
+          this.log('VERIFY Band ' + (i + 1) + ': ' + (ok ? '✓' : '✗'), ok ? 'ok' : 'err');
+        },
+
+        onBandDone(i) {
+          if (!this.requireDevice()) return;
+          clearTimeout(this._timers['band' + i]);
+          this.writeBand(i)
+            .then(() => this.verifyBand(i))
+            .catch(e => this.log('Band ' + (i + 1) + ' gagal: ' + e.message, 'err'));
+        },
+
+        async commit() {
+          if (!this.requireDevice()) return;
+          this.busy = 'commit';
+          try {
+            const r = await this._send(this.commitPkt());
+            if (r && r[6] === 0x03) this.log('COMMIT OK — state DSP tersimpan ke flash.', 'ok');
+            else this.log('COMMIT ditolak (status 0x00).', 'err');
+          } catch (e) {
+            this.log('Commit gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async connect() {
+          if (this.connecting) return;
+          this.connecting = true;
+          try {
+            if (!navigator.hid) throw new Error('WebHID tidak didukung (butuh secure context)');
+            const devs = await navigator.hid.requestDevice({ filters: [{ vendorId: 0x2E8B, productId: 0xFEAA }] });
+            if (!devs.length) { this.log('Tidak ada perangkat dipilih.', 'warn'); return; }
+            this.device = devs[0];
+            await this.device.open();
+            this.registerReportHandler(this.device);
+            this.connected = true;
+            this.productName = this.device.productName || 'RYNLABS DSPi';
+            this.deviceInfo = 'VID 0x2E8B · PID 0xFEAA · ' + this.productName + ' · Report ID 0x4B (75)';
+            this.log('Connected: ' + this.productName + ' (Report ID 0x4B).', 'ok');
+          } catch (e) {
+            this.log('Connection error: ' + e.message, 'err');
+          } finally {
+            this.connecting = false;
+          }
+        },
+
+        async disconnect() {
+          if (this.device) {
+            try { await this.device.close(); } catch (e) { }
+            this.device = null;
+          }
+          this.connected = false;
+          this.pending = [];
+          this.productName = '';
+          this.deviceInfo = '';
+          this.log('Disconnected.', 'info');
+        }
+      };
+    }
+  </script>
+</body>
+</html>

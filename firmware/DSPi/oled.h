@@ -6,16 +6,22 @@
  * does not touch the I2C1 target control interface (defaults 18/19) nor
  * the S/PDIF RX input, whose default GPIO 5 this board does not use.
  *
- * CONTENT: auto-rotating pages built from existing firmware state
+ * CONTENT: pages built from existing firmware state
  * (audio_state.freq, master_volume_db, user_mute, active_input_source,
- * filter_recipes / channel names):
- *   page 0  status + EQ bands 1-5
- *   page 1  status + EQ bands 6-10
- * `oled_tick()` advances the page on a non-blocking OLED_PAGE_DURATION_MS
- * timeout and re-renders the screen only when a line actually changed
- * (compared against the last frame).  In steady state it is a pure no-op —
- * the full-frame I²C write (~21 ms at 400 kHz) happens at most once per page
- * rotation, never periodically, so the slideshow does not block audio.
+ * filter_recipes / channel names, and the live DSP effect configs):
+ *   page 0..n-1  status + EQ bands 1-5 / 6-10
+ *   page n       status + DSP effects (crossfeed / loudness / psybass /
+ *                leveller) status
+ * The EQ band pages come first (one per 5 bands) and the effects page is
+ * always the last page.
+ *
+ * `oled_tick()` re-renders the selected page only when a line actually
+ * changed (compared against the last frame).  In steady state it is a pure
+ * no-op — the full-frame I²C write (~21 ms at 400 kHz) happens only on real
+ * content changes, never periodically, so the status screen does not block
+ * audio.  Slideshow auto-rotation is currently disabled: the display stays on
+ * the page selected via oled_set_page() (default page 0) to avoid a periodic
+ * full-frame flush clicking the audio stream.
  *
  * THREAD MODEL: all entry points are main-thread, called from main() /
  * the main loop alongside dac_hw_mute_tick().  All state read (audio_state,
@@ -51,21 +57,21 @@
  * Idempotent.  Call from main() after core0_init(). */
 void oled_init(void);
 
-/* Main-loop tick.  Advances the slideshow page on its non-blocking timeout
- * and re-renders the screen when content has changed (throttled to at most
- * one rebuild per OLED_REFRESH_MS).  Cheap no-op otherwise.  Call once per
- * main-loop iteration. */
+/* Main-loop tick.  Re-renders the selected page when content has changed
+ * (throttled to at most one rebuild per OLED_REFRESH_MS).  Cheap no-op
+ * otherwise.  Call once per main-loop iteration. */
 void oled_tick(void);
 
 /* Select which channel's EQ is shown on the EQ rows.  Clamped to
  * [0, NUM_CHANNELS).  Default 0 (first input channel). */
 void oled_set_eq_channel(uint8_t ch);
 
-/* Select which slideshow page is shown.  The page index wraps/clamps to the
- * current number of pages on the next tick. */
+/* Select which page is shown.  The page index wraps/clamps to the current
+ * number of pages on the next rebuild.  With slideshow rotation disabled
+ * this is the way to move between EQ / effects pages. */
 void oled_set_page(uint8_t page);
 
-/* Toggle the auto slideshow renderer.  Disabled automatically while
+/* Toggle the auto status-screen renderer.  Disabled automatically while
  * oled_text()/oled_clear() own the screen; re-enable with true. */
 void oled_set_auto(bool on);
 

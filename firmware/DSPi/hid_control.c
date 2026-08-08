@@ -24,6 +24,9 @@
  *   0x40  channel select       0..NUM_CHANNELS-1 (applies to 0x26..0x3B)
  *   0x41  master volume        p0/p1 int16 0.1 dB (<= -1280 = mute)
  *   0x42  mute                 0 = unmuted, 1 = muted
+ *   0x50..0x67  DSP effects    crossfeed / loudness / psybass / leveller
+ *                              (v2 block, see rynlabs_dspi_hid_protocol_spec_v2.md)
+ *                              global - NOT scoped by register 0x40 channel select
  */
 
 #include <string.h>
@@ -50,6 +53,8 @@
 #define HID_REG_CHANNEL     0x40
 #define HID_REG_MASTER_VOL  0x41
 #define HID_REG_MUTE        0x42
+#define HID_REG_EFF_BASE    0x50   // v2 DSP effects block (crossfeed .. leveller)
+#define HID_REG_EFF_LAST    0x67
 
 // --- Reply status byte ---
 #define HID_STATUS_OK       0x03
@@ -350,6 +355,86 @@ static bool hid_reg_read_mute(uint8_t *out) {
     return true;
 }
 
+// --- Effects block (registers 0x50..0x67, v2) ---
+// Bridges the four DSP effects (crossfeed, loudness, psybass, leveller) onto
+// the transport-neutral vendor REQ surface.  All registers are GLOBAL: they are
+// NOT scoped by the 0x40 channel select, unlike the PEQ block.  Scope clamping
+// follows hid_expansion_plan.md §5: crossfeed 0x01, loudness/psybass 0x0003,
+// leveller 0x03/0x03 (per byte).
+typedef struct {
+    uint8_t  set_req;   // vendor write REQ (0 = unsupported)
+    uint8_t  get_req;   // vendor read REQ
+    uint8_t  width;     // wire width: 1 = byte, 2 = u16 LE, 4 = f32 LE
+    uint16_t clamp;     // write scope mask (0 = pass through)
+} HidEffReg;
+
+static const HidEffReg HID_EFF_REGS[0x68] = {
+    [0x50] = { REQ_SET_CROSSFEED,          REQ_GET_CROSSFEED,         1, 0x0000 }, // crossfeed enable
+    [0x51] = { REQ_SET_CROSSFEED_PRESET,   REQ_GET_CROSSFEED_PRESET,  1, 0x0000 }, // preset 0..3
+    [0x52] = { REQ_SET_CROSSFEED_FREQ,     REQ_GET_CROSSFEED_FREQ,    4, 0x0000 }, // custom freq f32
+    [0x53] = { REQ_SET_CROSSFEED_FEED,     REQ_GET_CROSSFEED_FEED,    4, 0x0000 }, // custom feed f32
+    [0x54] = { REQ_SET_CROSSFEED_ITD,      REQ_GET_CROSSFEED_ITD,     1, 0x0000 }, // ITD enable
+    [0x55] = { REQ_SET_CROSSFEED_OUTPUTS,  REQ_GET_CROSSFEED_OUTPUTS, 1, 0x0001 }, // output pair mask
+    [0x56] = { REQ_SET_LOUDNESS,           REQ_GET_LOUDNESS,          1, 0x0000 }, // loudness enable
+    [0x57] = { REQ_SET_LOUDNESS_REF,       REQ_GET_LOUDNESS_REF,      4, 0x0000 }, // ref SPL f32
+    [0x58] = { REQ_SET_LOUDNESS_INTENSITY, REQ_GET_LOUDNESS_INTENSITY, 4, 0x0000 }, // intensity f32
+    [0x59] = { REQ_SET_LOUDNESS_MASK,      REQ_GET_LOUDNESS_MASK,     2, 0x0003 }, // output mask u16
+    [0x5A] = { REQ_SET_PSYBASS,            REQ_GET_PSYBASS,           1, 0x0000 }, // psybass enable
+    [0x5B] = { REQ_SET_PSYBASS_CUTOFF,     REQ_GET_PSYBASS_CUTOFF,    4, 0x0000 }, // cutoff f32
+    [0x5C] = { REQ_SET_PSYBASS_HARMONICS,  REQ_GET_PSYBASS_HARMONICS, 4, 0x0000 }, // harmonics f32
+    [0x5D] = { REQ_SET_PSYBASS_DRIVE,      REQ_GET_PSYBASS_DRIVE,     4, 0x0000 }, // drive f32
+    [0x5E] = { REQ_SET_PSYBASS_CHARACTER,  REQ_GET_PSYBASS_CHARACTER, 4, 0x0000 }, // character f32
+    [0x5F] = { REQ_SET_PSYBASS_ORIGINAL,   REQ_GET_PSYBASS_ORIGINAL,  4, 0x0000 }, // original f32
+    [0x60] = { REQ_SET_PSYBASS_MASK,       REQ_GET_PSYBASS_MASK,      2, 0x0003 }, // output mask u16
+    [0x61] = { REQ_SET_LEVELLER_ENABLE,    REQ_GET_LEVELLER_ENABLE,   1, 0x0000 }, // leveller enable
+    [0x62] = { REQ_SET_LEVELLER_AMOUNT,    REQ_GET_LEVELLER_AMOUNT,   4, 0x0000 }, // amount f32
+    [0x63] = { REQ_SET_LEVELLER_SPEED,     REQ_GET_LEVELLER_SPEED,    1, 0x0000 }, // speed 0..2
+    [0x64] = { REQ_SET_LEVELLER_MAX_GAIN,  REQ_GET_LEVELLER_MAX_GAIN, 4, 0x0000 }, // max gain f32
+    [0x65] = { REQ_SET_LEVELLER_LOOKAHEAD, REQ_GET_LEVELLER_LOOKAHEAD, 1, 0x0000 }, // lookahead
+    [0x66] = { REQ_SET_LEVELLER_GATE,      REQ_GET_LEVELLER_GATE,     4, 0x0000 }, // gate threshold f32
+    [0x67] = { REQ_SET_LEVELLER_MASKS,     REQ_GET_LEVELLER_MASKS,    2, 0x0303 }, // det+apply masks
+};
+
+static bool hid_eff_write(uint8_t reg, const uint8_t *p) {
+    if (reg < HID_REG_EFF_BASE || reg > HID_REG_EFF_LAST)
+        return false;
+    const HidEffReg *e = &HID_EFF_REGS[reg];
+    if (e->set_req == 0 || e->width == 0)
+        return false;
+    uint8_t buf[2];
+    switch (e->width) {
+        case 1:
+            buf[0] = (e->clamp != 0) ? (p[0] & (uint8_t)(e->clamp & 0xFF)) : p[0];
+            return hid_set_dispatch(e->set_req, 0, buf, 1);
+        case 2: {
+            uint16_t v = (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
+            if (e->clamp) v &= e->clamp;
+            buf[0] = (uint8_t)(v & 0xFF);
+            buf[1] = (uint8_t)(v >> 8);
+            return hid_set_dispatch(e->set_req, 0, buf, 2);
+        }
+        case 4:
+            return hid_set_dispatch(e->set_req, 0, p, 4);
+        default:
+            return false;
+    }
+}
+
+static bool hid_eff_read(uint8_t reg, uint8_t *out) {
+    if (reg < HID_REG_EFF_BASE || reg > HID_REG_EFF_LAST)
+        return false;
+    const HidEffReg *e = &HID_EFF_REGS[reg];
+    if (e->get_req == 0 || e->width == 0)
+        return false;
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    if (!hid_get_dispatch(e->get_req, 0, e->width, &rd, &rl) || rl < e->width)
+        return false;
+    out[0] = out[1] = out[2] = out[3] = 0;
+    memcpy(out, rd, e->width);
+    return true;
+}
+
 // --- Frame handling ---
 static bool hid_reg_read(uint8_t reg, uint8_t *out) {
     if (reg == HID_REG_EQ_ENABLE)
@@ -365,6 +450,8 @@ static bool hid_reg_read(uint8_t reg, uint8_t *out) {
         return hid_reg_read_master_vol(out);
     if (reg == HID_REG_MUTE)
         return hid_reg_read_mute(out);
+    if (reg >= HID_REG_EFF_BASE && reg <= HID_REG_EFF_LAST)
+        return hid_eff_read(reg, out);
     return false;
 }
 
@@ -382,6 +469,8 @@ static bool hid_reg_write(uint8_t reg, const uint8_t *p) {
         return hid_reg_write_master_vol(p);
     if (reg == HID_REG_MUTE)
         return hid_reg_write_mute(p);
+    if (reg >= HID_REG_EFF_BASE && reg <= HID_REG_EFF_LAST)
+        return hid_eff_write(reg, p);
     return false;
 }
 

@@ -5,12 +5,15 @@
  * to this firmware's main-loop conventions.  The library owns the driver,
  * the builtin 8x5 font, framing and addressing; this file supplies content.
  *
- * CONTENT — auto-rotating pages (each a full 8-row frame):
- *   page 0  status + EQ bands 1-5
- *   page 1  status + EQ bands 6-10
- *   (more pages can be added to the page table; see oled_pages[])
+ * CONTENT — pages (each a full 8-row frame):
+ *   page 0..n-1  status + EQ bands (5 per page, slices of bands 1-10)
+ *   page n       status + DSP effects status (crossfeed / loudness /
+ *                psybass / leveller)
+ * The EQ band pages come first (count depends on active bands) and the
+ * effects page is always the last page, so the page index is
+ * decoupled from the EQ band slice index (see oled_build_frame()).
  *
- *   row 0  "DSPi <source>"          USB / SPDIF / I2S / ADAT
+ *   row 0  "DSPi <source>"          USB / SPDIF / I2S / ADAT (inverted bar)
  *   row 1  "<rate>  <vol dB|MUTE>"  44.1k / 48.0k / 96.0k, master volume
  *   row 2  "EQ <channel> (N) p/q"   channel name + active band count + page
  *   row 3.. "<band> <type> <f> <g>"  up to 5 non-flat bands per page
@@ -19,16 +22,17 @@
  * DSP pipeline is not modified.  Everything is main-thread, so there is no
  * race with the audio path (which also runs on core 0).
  *
- * WRITE MODEL: oled_tick() advances the page index on a non-blocking timer
- * (absolute_time_t timeout — no sleep in the loop) and rebuilds the frame.
+ * WRITE MODEL: slideshow auto-rotation is disabled (see oled_tick()); the
+ * display shows the page selected by oled_set_page() and updates it in place.
  * The frame is pushed to the display only when a line actually changed
  * (compared against the last rendered frame), so the ~21 ms full-frame I²C
- * write happens at most once per page rotation in steady state, plus when a
- * user event (source/rate/volume/EQ edit) changes a line.  The 200 ms throttle
- * additionally bounds how often the frame is even rebuilt.
+ * write happens only on real content changes (boot, source/rate/volume/EQ
+ * edit) — never periodically — so the slideshow can't stall the audio main
+ * loop and click the stream.  The 200 ms throttle additionally bounds how
+ * often the frame is even rebuilt.
  *
  * oled_text()/oled_clear() remain as generic framebuffer primitives.  Calling
- * them switches the display to custom mode; the auto slideshow resumes via
+ * them switches the display to custom mode; the auto status screen resumes via
  * oled_set_auto(true).
  *
  * See Documentation/Features/ for the planned OLED content specs.
@@ -41,6 +45,10 @@
 
 #include "oled.h"
 #include "ssd1306.h"
+
+// font_8x5 is defined in font.h (included by ssd1306.c); reference it here
+// via extern so both translation units share one definition.
+extern const uint8_t font_8x5[];
 
 #include "config.h"
 #include "audio_input.h"
@@ -109,15 +117,91 @@ static int oled_count_active_bands(void) {
     return n;
 }
 
+// Number of EQ band pages needed for the selected channel.  Always >= 1 so
+// the "all flat" state is still shown.
+static int oled_eq_page_count(void) {
+    int p = (oled_count_active_bands() + (int)OLED_PAGE_BANDS - 1)
+            / (int)OLED_PAGE_BANDS;
+    return p < 1 ? 1 : p;
+}
+
+// Total slideshow pages: EQ band pages followed by the effects status page.
+static int oled_page_count(void) {
+    return oled_eq_page_count() + 1;
+}
+
+// Rows 2..7 for the effects status page.  One line per DSP effect: name,
+// ON/OFF and a short parameter summary so a glance shows the live state.
+// `position`/`total` are the slideshow page position shown in the header.
+static void oled_build_fx_rows(int position, int total) {
+    int r = 3;
+
+    snprintf(oled_frame[2], sizeof(oled_frame[2]), "FX EFFECTS %d/%d",
+             position, total);
+
+    // Crossfeed: preset name + effective crossover frequency.
+    if (crossfeed_config.enabled) {
+        const char *preset = "DFLT";
+        float fc = 700.0f;
+        switch (crossfeed_config.preset) {
+            case CROSSFEED_PRESET_CHUMOY: preset = "CHUM"; fc = 700.0f; break;
+            case CROSSFEED_PRESET_MEIER:  preset = "MEIR"; fc = 650.0f; break;
+            case CROSSFEED_PRESET_CUSTOM: preset = "CUST"; fc = crossfeed_config.custom_fc; break;
+            default: break;
+        }
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "CF ON  %-4s %g",
+                 preset, (double)fc);
+    } else {
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "CF OFF");
+    }
+    r++;
+
+    // Loudness: reference SPL + intensity.
+    if (loudness_enabled) {
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "LD ON  %.0fdB %d%%",
+                 (double)loudness_ref_spl, (int)loudness_intensity_pct);
+    } else {
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "LD OFF");
+    }
+    r++;
+
+    // Psybass: cutoff + drive.
+    if (psybass_config.enabled) {
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "PB ON  %.0fHz %+.0fdB",
+                 (double)psybass_config.cutoff_hz, (double)psybass_config.drive_db);
+    } else {
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "PB OFF");
+    }
+    r++;
+
+    // Leveller: amount + speed.
+    if (leveller_config.enabled) {
+        const char *speed = "SLOW";
+        switch (leveller_config.speed) {
+            case LEVELLER_SPEED_MEDIUM: speed = "MED";  break;
+            case LEVELLER_SPEED_FAST:   speed = "FAST"; break;
+            default: break;
+        }
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "LV ON  %d%% %s",
+                 (int)leveller_config.amount, speed);
+    } else {
+        snprintf(oled_frame[r], sizeof(oled_frame[r]), "LV OFF");
+    }
+    r++;
+
+    for (; r < OLED_PAGES; r++)
+        oled_frame[r][0] = '\0';
+}
+
 // Build the 8 display lines for the current page into oled_frame[].
 static void oled_build_frame(void) {
     char buf[OLED_WIDTH / 6 + 1];
     int n_active = oled_count_active_bands();
+    int n_eq = oled_eq_page_count();
 
-    // Total pages for the EQ content; clamp the current page index.
-    int n_pages = (n_active + (int)OLED_PAGE_BANDS - 1) / (int)OLED_PAGE_BANDS;
-    if (n_pages < 1) n_pages = 1;
-    if (oled_page_idx >= n_pages) oled_page_idx = 0;
+    // Clamp the page index to the total slideshow (EQ pages + effects page).
+    if (oled_page_idx >= oled_page_count())
+        oled_page_idx = 0;
 
     // Rows 0..1: title + source, rate + volume / mute (shared by all pages).
     snprintf(oled_frame[0], sizeof(oled_frame[0]), "DSPi %s", oled_source_name());
@@ -129,11 +213,17 @@ static void oled_build_frame(void) {
                  buf, (double)master_volume_db);
     }
 
-    // Row 2: EQ header with channel name, active band count and page position.
+    // Effects status page: always the last slideshow page.
+    if (oled_page_idx >= n_eq) {
+        oled_build_fx_rows(oled_page_idx + 1, oled_page_count());
+        return;
+    }
+
+    // EQ page: header + this page's slice of the non-flat bands.
     char ch_name[PRESET_NAME_LEN];
     get_default_channel_name(oled_eq_channel, active_input_source, NULL, ch_name);
     snprintf(oled_frame[2], sizeof(oled_frame[2]), "EQ %s (%d) %d/%d",
-             ch_name, n_active, oled_page_idx + 1, n_pages);
+             ch_name, n_active, oled_page_idx + 1, n_eq);
 
     // Rows 3..7: this page's slice of the non-flat bands.
     int r = 3;
@@ -152,6 +242,33 @@ static void oled_build_frame(void) {
         oled_frame[r][0] = '\0';
 }
 
+// Render `s` as black text on a filled white bar covering page `row`.
+// Gives the slideshow title row a distinct header look (white bar with
+// black glyphs) versus the normal content rows below.  Walks the same
+// font_8x5 glyph layout as ssd1306_draw_char but clears the glyph pixels
+// instead of setting them, over a row-wide white bar.
+static void oled_draw_inverted_row(uint8_t row, const char *s) {
+    const uint32_t y = row * 8u;
+    ssd1306_draw_square(&oled_disp, 0, y, OLED_WIDTH, 8);
+    uint32_t x = 0;
+    for (const char *p = s; *p; p++) {
+        uint8_t c = (uint8_t)*p;
+        if (c < font_8x5[3] || c > font_8x5[4]) {
+            x += font_8x5[1] + font_8x5[2];
+            continue;
+        }
+        const uint8_t *g = &font_8x5[5 + (c - font_8x5[3]) * font_8x5[1]];
+        for (uint32_t w = 0; w < font_8x5[1]; w++) {
+            uint8_t line = g[w];
+            for (int8_t j = 0; j < 8; j++, line >>= 1) {
+                if (line & 1)
+                    ssd1306_clear_pixel(&oled_disp, x + w, y + j);
+            }
+        }
+        x += font_8x5[1] + font_8x5[2];
+    }
+}
+
 // Rebuild + push the frame to the display if any line differs from the last
 // rendered one.  Returns true when a flush was issued.
 static bool oled_render_auto(void) {
@@ -164,7 +281,10 @@ static bool oled_render_auto(void) {
 
     ssd1306_clear(&oled_disp);
     for (int i = 0; i < OLED_PAGES; i++) {
-        if (oled_frame[i][0] != '\0')
+        if (oled_frame[i][0] == '\0') continue;
+        if (i == 0)
+            oled_draw_inverted_row(0, oled_frame[0]);
+        else
             ssd1306_draw_string(&oled_disp, 0, i * 8, 1, oled_frame[i]);
     }
     ssd1306_show(&oled_disp);
@@ -200,11 +320,19 @@ void oled_init(void) {
 void oled_tick(void) {
     if (!oled_auto) return;
 
-    // Advance the slideshow on a non-blocking timeout.
-    if (time_reached(oled_next_page)) {
-        oled_next_page = make_timeout_time_ms(OLED_PAGE_DURATION_MS);
-        oled_page_idx++;
-    }
+    // Slideshow auto-rotation is DISABLED for now: the display stays on the
+    // page set by oled_set_page() (default page 0) so the periodic full-frame
+    // I²C flush on page change (~21 ms per 1 KB @ 400 kHz) can't stall the
+    // audio main loop and cause a click/pop in the stream.  The rebuild +
+    // flush throttle below still live-updates content (source, rate, volume,
+    // EQ/effect edits).  All page designs remain in oled_build_frame() and are
+    // reachable manually via oled_set_page().  Re-enable rotation by
+    // restoring the timeout advance below.
+    //
+    // if (time_reached(oled_next_page)) {
+    //     oled_next_page = make_timeout_time_ms(OLED_PAGE_DURATION_MS);
+    //     oled_page_idx++;
+    // }
 
     // Rebuild (and maybe flush) at most once per OLED_REFRESH_MS.
     if (!time_reached(oled_next_flush)) return;

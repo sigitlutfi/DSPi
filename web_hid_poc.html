@@ -310,6 +310,52 @@
       font-weight: 400;
     }
 
+    .eff-box {
+      background: var(--card-alt);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .eff-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .eff-head strong {
+      color: var(--accent);
+      font-size: 0.95rem;
+    }
+
+    .eff-regs {
+      color: var(--gold);
+      font-weight: 600;
+      font-size: 0.72rem;
+      margin-left: 6px;
+    }
+
+    .eff-note {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 6px;
+      border-top: 1px dashed var(--border);
+      padding-top: 8px;
+    }
+
+    input[type="checkbox"] {
+      width: auto;
+      margin-right: 6px;
+      accent-color: var(--accent);
+      vertical-align: middle;
+    }
+
+    .eff-box .form-group { margin-bottom: 10px; }
+    .eff-box .btn-row { margin-top: 4px; }
+
     @media (max-width: 800px) {
       .grid-2 { grid-template-columns: 1fr; }
       body { padding: 14px; }
@@ -402,6 +448,160 @@
       </table>
     </div>
 
+    <!-- DSP Effects Card (Regs 0x50 - 0x67) -->
+    <div class="card">
+      <div class="card-head">
+        <h3>DSP Effects (Regs 0x50 - 0x67)</h3>
+        <span class="hint">Crossfeed · Loudness · Psybass · Leveller — scope: input ch0/1, output slot 1 (0/1)</span>
+      </div>
+
+      <div class="grid-2">
+        <!-- Crossfeed -->
+        <div class="eff-box">
+          <div class="eff-head">
+            <strong>Crossfeed<span class="eff-regs">0x50 - 0x55</span></strong>
+            <div class="btn-row">
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('crossfeed', true)">Enable</button>
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('crossfeed', false)">Disable</button>
+              <span id="chip-crossfeed" class="status-chip unknown">OFF</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Preset (0x51)</label>
+            <select id="cf_preset">
+              <option value="0">0 · DEFAULT (700 Hz / 4.5 dB)</option>
+              <option value="1">1 · CHUMOY (700 Hz / 6.0 dB)</option>
+              <option value="2">2 · MEIER (650 Hz / 9.5 dB)</option>
+              <option value="3">3 · CUSTOM</option>
+            </select>
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Custom Freq (0x52, Hz)</label>
+              <input type="number" id="cf_freq" value="700" min="500" max="2000" step="10">
+            </div>
+            <div class="form-group">
+              <label>Custom Feed (0x53, dB)</label>
+              <input type="number" id="cf_feed" value="4.5" min="0" max="15" step="0.5">
+            </div>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="cf_itd" checked> ITD Enable (0x54)</label>
+          </div>
+          <div class="btn-row">
+            <button id="btnWriteCrossfeed">Apply Crossfeed</button>
+          </div>
+          <div class="eff-note">Output pair mask (0x55) pinned to 0x01 = slot 1 (outputs 0/1). Freq/Feed only active when preset = CUSTOM.</div>
+        </div>
+
+        <!-- Loudness -->
+        <div class="eff-box">
+          <div class="eff-head">
+            <strong>Loudness Comp.<span class="eff-regs">0x56 - 0x59</span></strong>
+            <div class="btn-row">
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('loudness', true)">Enable</button>
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('loudness', false)">Disable</button>
+              <span id="chip-loudness" class="status-chip unknown">OFF</span>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Ref SPL (0x57, dB)</label>
+              <input type="number" id="loud_ref" value="87" min="40" max="100" step="1">
+            </div>
+            <div class="form-group">
+              <label>Intensity (0x58, %)</label>
+              <input type="number" id="loud_int" value="100" min="0" max="200" step="5">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="btnWriteLoudness">Apply Loudness</button>
+          </div>
+          <div class="eff-note">Output mask (0x59) pinned to 0x0003 = outputs 0/1.</div>
+        </div>
+
+        <!-- Psybass -->
+        <div class="eff-box">
+          <div class="eff-head">
+            <strong>Psybass<span class="eff-regs">0x5A - 0x60</span></strong>
+            <div class="btn-row">
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('psybass', true)">Enable</button>
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('psybass', false)">Disable</button>
+              <span id="chip-psybass" class="status-chip unknown">OFF</span>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Cutoff (0x5B, Hz)</label>
+              <input type="number" id="pb_cutoff" value="80" min="30" max="300" step="1">
+            </div>
+            <div class="form-group">
+              <label>Harmonics (0x5C, dB)</label>
+              <input type="number" id="pb_harm" value="0" min="-24" max="12" step="1">
+            </div>
+            <div class="form-group">
+              <label>Drive (0x5D, dB)</label>
+              <input type="number" id="pb_drive" value="6" min="0" max="18" step="1">
+            </div>
+            <div class="form-group">
+              <label>Character (0x5E, %)</label>
+              <input type="number" id="pb_char" value="50" min="0" max="100" step="5">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Original (0x5F, dB)</label>
+            <input type="number" id="pb_orig" value="0" min="-60" max="0" step="1">
+          </div>
+          <div class="btn-row">
+            <button id="btnWritePsybass">Apply Psybass</button>
+          </div>
+          <div class="eff-note">Output mask (0x60) pinned to 0x0003 = outputs 0/1.</div>
+        </div>
+
+        <!-- Leveller -->
+        <div class="eff-box">
+          <div class="eff-head">
+            <strong>Volume Leveller<span class="eff-regs">0x61 - 0x67</span></strong>
+            <div class="btn-row">
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('leveller', true)">Enable</button>
+              <button class="secondary" style="font-size:0.72rem;" onclick="effSetEnable('leveller', false)">Disable</button>
+              <span id="chip-leveller" class="status-chip unknown">OFF</span>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Amount (0x62, %)</label>
+              <input type="number" id="lv_amount" value="50" min="0" max="100" step="5">
+            </div>
+            <div class="form-group">
+              <label>Max Gain (0x64, dB)</label>
+              <input type="number" id="lv_maxgain" value="15" min="0" max="35" step="1">
+            </div>
+            <div class="form-group">
+              <label>Gate Threshold (0x66, dBFS)</label>
+              <input type="number" id="lv_gate" value="-96" min="-96" max="0" step="1">
+            </div>
+            <div class="form-group">
+              <label>Speed (0x63)</label>
+              <select id="lv_speed">
+                <option value="0">0 · SLOW</option>
+                <option value="1">1 · MEDIUM</option>
+                <option value="2">2 · FAST</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="lv_look" checked> Lookahead (0x65)</label>
+          </div>
+          <div class="btn-row">
+            <button id="btnWriteLeveller">Apply Leveller</button>
+            <button id="btnPullEffects" class="purple" style="font-size:0.75rem;">Pull All Effects</button>
+          </div>
+          <div class="eff-note">Detector/Apply mask (0x67) pinned to 0x03/0x03 = inputs 0/1.</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Log Console Card -->
     <div class="card">
       <div class="card-head">
@@ -434,7 +634,6 @@
       { id: 'AP1',  val: 0x15, label: 'All-pass 1st (AP1)' },
       { id: 'LSQ1', val: 0x16, label: 'Low Shelf 1st (LSQ1)' },
       { id: 'HSQ1', val: 0x17, label: 'High Shelf 1st (HSQ1)' },
-      { id: 'LT',   val: 0x18, label: 'Linkwitz-Transform (LT)' },
       { id: 'LP1',  val: 0x19, label: 'Low-pass 1st (LP1)' },
       { id: 'HP1',  val: 0x1A, label: 'High-pass 1st (HP1)' }
     ];
@@ -576,6 +775,97 @@
 
     function buildPeqEnablePacket(on) {
       return new Uint8Array([0x24, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, on ? 0x01 : 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    // --- v2 Effects: packet builders (Regs 0x50 - 0x67) ---
+    function buildWriteBytePacket(regId, v) {
+      return new Uint8Array([regId, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, v & 0xFF, 0x00, 0x00, 0x00]);
+    }
+
+    function buildWriteU16Packet(regId, v) {
+      return new Uint8Array([regId, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, v & 0xFF, (v >> 8) & 0xFF, 0x00, 0x00]);
+    }
+
+    function buildWriteFloatPacket(regId, value) {
+      const buf = new ArrayBuffer(4);
+      new DataView(buf).setFloat32(0, value, true); // little-endian
+      const b = new Uint8Array(buf);
+      return new Uint8Array([regId, 0x00, 0x00, 0x00, CMD_WRITE, 0x00, b[0], b[1], b[2], b[3]]);
+    }
+
+    function readFloatFromResponse(resp) {
+      return new DataView(resp.buffer, resp.byteOffset + 6, 4).getFloat32(0, true);
+    }
+
+    // Effect registry: reg -> [writeBuilder, readParser, defaultValue]
+    const EFFECT_REGS = {
+      // crossfeed
+      0x50: ['byte', null, 0],
+      0x51: ['byte', null, 0],
+      0x52: ['float', null, 700.0],
+      0x53: ['float', null, 4.5],
+      0x54: ['byte', null, 1],
+      0x55: ['byte', null, 0x01],
+      // loudness
+      0x56: ['byte', null, 0],
+      0x57: ['float', null, 87.0],
+      0x58: ['float', null, 100.0],
+      0x59: ['u16', null, 0x0003],
+      // psybass
+      0x5A: ['byte', null, 0],
+      0x5B: ['float', null, 80.0],
+      0x5C: ['float', null, 0.0],
+      0x5D: ['float', null, 6.0],
+      0x5E: ['float', null, 50.0],
+      0x5F: ['float', null, 0.0],
+      0x60: ['u16', null, 0x0003],
+      // leveller
+      0x61: ['byte', null, 0],
+      0x62: ['float', null, 50.0],
+      0x63: ['byte', null, 0],
+      0x64: ['float', null, 15.0],
+      0x65: ['byte', null, 1],
+      0x66: ['float', null, -96.0],
+      0x67: ['byte', null, 0x03]
+    };
+
+    // Convenience writers/readers per effect
+    function effWrite(regId, value) {
+      const kind = EFFECT_REGS[regId][0];
+      let pkt;
+      if (kind === 'float') pkt = buildWriteFloatPacket(regId, value);
+      else if (kind === 'u16') pkt = buildWriteU16Packet(regId, value);
+      else pkt = buildWriteBytePacket(regId, value);
+      return sendCommandWithResponse(pkt);
+    }
+
+    async function effRead(regId) {
+      const resp = await sendCommandWithResponse(buildReadPacket(regId));
+      const kind = EFFECT_REGS[regId][0];
+      if (kind === 'float') return readFloatFromResponse(resp);
+      if (kind === 'u16') return resp[6] | (resp[7] << 8);
+      return resp[6];
+    }
+
+    // UI helpers: write the whole block of one effect, or read it back
+    async function writeEffect(regs, fields) {
+      for (const [regId, value] of regs) {
+        await effWrite(regId, value);
+        await delay(15);
+      }
+      log(`Written regs ${regs.map(r => '0x' + r[0].toString(16).toUpperCase()).join(', ')}`, 'rx');
+      await pullEffectFields(fields);
+    }
+
+    async function pullEffectFields(fields) {
+      for (const [regId, fieldId, fmt] of fields) {
+        const v = await effRead(regId);
+        const el = document.getElementById(fieldId);
+        if (el) {
+          if (fieldId === 'cf_itd' || fieldId === 'lv_look') el.checked = v !== 0;
+          else el.value = (fmt === 'float') ? parseFloat(v.toFixed(1)) : v;
+        }
+      }
     }
 
     function typeValToId(val) {
@@ -779,6 +1069,159 @@
 
     document.getElementById('btnClearLog').addEventListener('click', () => {
       logConsole.innerHTML = '';
+    });
+
+    // --- v2 Effects: event handlers ---
+    function effChip(id, on) {
+      const chip = document.getElementById('chip-' + id);
+      chip.textContent = on ? 'ON' : 'OFF';
+      chip.className = on ? 'status-chip active' : 'status-chip bypassed';
+    }
+
+    const EFF_ENABLE_REG = { crossfeed: 0x50, loudness: 0x56, psybass: 0x5A, leveller: 0x61 };
+
+    async function effSetEnable(id, on) {
+      const regId = EFF_ENABLE_REG[id];
+      try {
+        await effWrite(regId, on ? 1 : 0);
+        effChip(id, on);
+        log(`${id} ${on ? 'ENABLED' : 'DISABLED'} (Reg 0x${regId.toString(16)})`, 'rx');
+      } catch (err) {
+        log(`${id} enable failed: ${err.message}`, 'err');
+      }
+    }
+
+    document.getElementById('btnWriteCrossfeed').addEventListener('click', async () => {
+      try {
+        const preset = parseInt(document.getElementById('cf_preset').value);
+        await writeEffect(
+          [
+            [0x51, preset],
+            [0x52, parseFloat(document.getElementById('cf_freq').value)],
+            [0x53, parseFloat(document.getElementById('cf_feed').value)],
+            [0x54, document.getElementById('cf_itd').checked ? 1 : 0]
+          ],
+          [
+            [0x51, 'cf_preset', 'int'],
+            [0x52, 'cf_freq', 'float'],
+            [0x53, 'cf_feed', 'float'],
+            [0x54, 'cf_itd', 'int']
+          ]
+        );
+        log('Crossfeed applied.', 'rx');
+      } catch (err) {
+        log(`Crossfeed failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnWriteLoudness').addEventListener('click', async () => {
+      try {
+        await writeEffect(
+          [
+            [0x57, parseFloat(document.getElementById('loud_ref').value)],
+            [0x58, parseFloat(document.getElementById('loud_int').value)]
+          ],
+          [
+            [0x57, 'loud_ref', 'float'],
+            [0x58, 'loud_int', 'float']
+          ]
+        );
+        log('Loudness applied.', 'rx');
+      } catch (err) {
+        log(`Loudness failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnWritePsybass').addEventListener('click', async () => {
+      try {
+        await writeEffect(
+          [
+            [0x5B, parseFloat(document.getElementById('pb_cutoff').value)],
+            [0x5C, parseFloat(document.getElementById('pb_harm').value)],
+            [0x5D, parseFloat(document.getElementById('pb_drive').value)],
+            [0x5E, parseFloat(document.getElementById('pb_char').value)],
+            [0x5F, parseFloat(document.getElementById('pb_orig').value)]
+          ],
+          [
+            [0x5B, 'pb_cutoff', 'float'],
+            [0x5C, 'pb_harm', 'float'],
+            [0x5D, 'pb_drive', 'float'],
+            [0x5E, 'pb_char', 'float'],
+            [0x5F, 'pb_orig', 'float']
+          ]
+        );
+        log('Psybass applied.', 'rx');
+      } catch (err) {
+        log(`Psybass failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnWriteLeveller').addEventListener('click', async () => {
+      try {
+        await writeEffect(
+          [
+            [0x62, parseFloat(document.getElementById('lv_amount').value)],
+            [0x63, parseInt(document.getElementById('lv_speed').value)],
+            [0x64, parseFloat(document.getElementById('lv_maxgain').value)],
+            [0x65, document.getElementById('lv_look').checked ? 1 : 0],
+            [0x66, parseFloat(document.getElementById('lv_gate').value)]
+          ],
+          [
+            [0x62, 'lv_amount', 'float'],
+            [0x63, 'lv_speed', 'int'],
+            [0x64, 'lv_maxgain', 'float'],
+            [0x65, 'lv_look', 'int'],
+            [0x66, 'lv_gate', 'float']
+          ]
+        );
+        log('Leveller applied.', 'rx');
+      } catch (err) {
+        log(`Leveller failed: ${err.message}`, 'err');
+      }
+    });
+
+    document.getElementById('btnPullEffects').addEventListener('click', async () => {
+      try {
+        log('Pulling all effect registers (0x50 - 0x67)...', 'info');
+        const groups = [
+          ['crossfeed', 0x50, [
+            [0x50, null], [0x51, 'cf_preset', 'int'], [0x52, 'cf_freq', 'float'],
+            [0x53, 'cf_feed', 'float'], [0x54, 'cf_itd', 'int'], [0x55, null]
+          ]],
+          ['loudness', 0x56, [
+            [0x56, null], [0x57, 'loud_ref', 'float'], [0x58, 'loud_int', 'float'], [0x59, null]
+          ]],
+          ['psybass', 0x5A, [
+            [0x5A, null], [0x5B, 'pb_cutoff', 'float'], [0x5C, 'pb_harm', 'float'],
+            [0x5D, 'pb_drive', 'float'], [0x5E, 'pb_char', 'float'], [0x5F, 'pb_orig', 'float'], [0x60, null]
+          ]],
+          ['leveller', 0x61, [
+            [0x61, null], [0x62, 'lv_amount', 'float'], [0x63, 'lv_speed', 'int'],
+            [0x64, 'lv_maxgain', 'float'], [0x65, 'lv_look', 'int'], [0x66, 'lv_gate', 'float'], [0x67, null]
+          ]]
+        ];
+
+        for (const [id, enableReg, fields] of groups) {
+          const on = (await effRead(enableReg)) !== 0;
+          effChip(id, on);
+          for (const [regId, fieldId, fmt] of fields) {
+            if (fieldId === null) {
+              const v = await effRead(regId);
+              log(`Reg 0x${regId.toString(16)} (${id}) = 0x${v.toString(16)} (mask, read-only in UI)`, 'rx');
+              continue;
+            }
+            const v = await effRead(regId);
+            const el = document.getElementById(fieldId);
+            if (fieldId === 'cf_itd' || fieldId === 'lv_look') el.checked = v !== 0;
+            else el.value = (fmt === 'float') ? parseFloat(v.toFixed(1)) : v;
+            log(`Reg 0x${regId.toString(16)} (${id}) = ${el.value}`, 'rx');
+            await delay(15);
+          }
+        }
+        log('Effect pull complete.', 'rx');
+      } catch (err) {
+        log(`Pull effects failed: ${err.message}`, 'err');
+      }
     });
 
     initPeqTable();
