@@ -254,9 +254,9 @@ static void oled_build_frame(void) {
 
 #include <math.h>
 
-// Calculate exact biquad frequency response magnitude in dB at frequency f_hz
-static float oled_eval_eq_gain_db(float f_hz) {
-    if (f_hz <= 0.0f) return 0.0f;
+// Calculate exact biquad frequency response magnitude in dB at frequency f_hz using precomputed active filters
+static float oled_eval_eq_gain_db(float f_hz, const Filter *active_f, const EqParamPacket *active_p, int active_count) {
+    if (f_hz <= 0.0f || active_count == 0) return 0.0f;
     float total_db = 0.0f;
     float fs = audio_state.freq > 0 ? (float)audio_state.freq : 48000.0f;
     float w0 = 2.0f * (float)M_PI * f_hz / fs;
@@ -265,29 +265,19 @@ static float oled_eval_eq_gain_db(float f_hz) {
     float sin_w = sinf(w0);
     float sin_2w = sinf(2.0f * w0);
 
-    for (int b = 0; b < MAX_BANDS; b++) {
-        const EqParamPacket *p = &filter_recipes[oled_eq_channel][b];
-        if (p->type == FILTER_FLAT || p->freq <= 0.0f || p->bypass == 1) continue;
-
-        // Compute exact magnitude response from biquad filter coefficients
-        Filter f;
-        dsp_compute_coefficients((EqParamPacket*)p, &f, fs);
-        if (f.bypass) continue;
-
+    for (int i = 0; i < active_count; i++) {
+        const Filter *f = &active_f[i];
 #if PICO_RP2350
-        float b0 = f.b0, b1 = f.b1, b2 = f.b2;
-        float a1 = f.a1, a2 = f.a2;
+        float b0 = f->b0, b1 = f->b1, b2 = f->b2;
+        float a1 = f->a1, a2 = f->a2;
 #else
-        // Q28 fixed-point to float conversion for RP2040
-        float b0 = (float)f.b0 / (float)(1 << FILTER_SHIFT);
-        float b1 = (float)f.b1 / (float)(1 << FILTER_SHIFT);
-        float b2 = (float)f.b2 / (float)(1 << FILTER_SHIFT);
-        float a1 = (float)f.a1 / (float)(1 << FILTER_SHIFT);
-        float a2 = (float)f.a2 / (float)(1 << FILTER_SHIFT);
+        float b0 = (float)f->b0 / (float)(1 << FILTER_SHIFT);
+        float b1 = (float)f->b1 / (float)(1 << FILTER_SHIFT);
+        float b2 = (float)f->b2 / (float)(1 << FILTER_SHIFT);
+        float a1 = (float)f->a1 / (float)(1 << FILTER_SHIFT);
+        float a2 = (float)f->a2 / (float)(1 << FILTER_SHIFT);
 #endif
 
-        // H(z) = (b0 + b1*z^-1 + b2*z^-2) / (1 + a1*z^-1 + a2*z^-2)
-        // Real & Imaginary parts evaluated at z = e^(j*w)
         float num_r = b0 + b1 * cos_w + b2 * cos_2w;
         float num_i = -(b1 * sin_w + b2 * sin_2w);
         float den_r = 1.0f + a1 * cos_w + a2 * cos_2w;
@@ -306,6 +296,23 @@ static float oled_eval_eq_gain_db(float f_hz) {
 
 // Render graphical EQ magnitude response curve into ssd1306 framebuffer.
 static void oled_draw_eq_curve_overlay(ssd1306_t *disp) {
+    // Pre-calculate coefficients for active bands ONCE to eliminate CPU overhead in loop
+    Filter active_f[MAX_BANDS];
+    EqParamPacket active_p[MAX_BANDS];
+    int active_count = 0;
+    float fs = audio_state.freq > 0 ? (float)audio_state.freq : 48000.0f;
+
+    for (int b = 0; b < MAX_BANDS; b++) {
+        const EqParamPacket *p = &filter_recipes[oled_eq_channel][b];
+        if (p->type == FILTER_FLAT || p->freq <= 0.0f || p->bypass == 1) continue;
+        Filter f;
+        dsp_compute_coefficients((EqParamPacket*)p, &f, fs);
+        if (f.bypass) continue;
+        active_f[active_count] = f;
+        active_p[active_count] = *p;
+        active_count++;
+    }
+
     // 1. Grid Lines Background (Area Y=22 to Y=55)
     const int y_top = 22;     // +6dB / +12dB Upper Bound
     const int y_zero = 39;    // 0dB Center Line
@@ -330,7 +337,6 @@ static void oled_draw_eq_curve_overlay(ssd1306_t *disp) {
     }
 
     // 2. Plot EQ Response Curve & Dynamic Visual Gain Boost
-    // Visual Gain Multiplier = 2.83px/dB (maps ±6dB full-height for prominent visible waves)
     const float gain_scale = 2.833f;
 
     int prev_y = y_zero;
@@ -339,7 +345,7 @@ static void oled_draw_eq_curve_overlay(ssd1306_t *disp) {
         float log_f = 1.30103f + ((float)x / 127.0f) * 3.0f;
         float f_hz = powf(10.0f, log_f);
 
-        float gain_db = oled_eval_eq_gain_db(f_hz);
+        float gain_db = oled_eval_eq_gain_db(f_hz, active_f, active_p, active_count);
 
         // Map gain_db to Y pixels
         int y = y_zero - (int)(gain_db * gain_scale);
@@ -370,15 +376,12 @@ static void oled_draw_eq_curve_overlay(ssd1306_t *disp) {
     }
 
     // 3. Mark Active PEQ Center Points (Dots on the curve for each active band)
-    for (int b = 0; b < MAX_BANDS; b++) {
-        const EqParamPacket *p = &filter_recipes[oled_eq_channel][b];
-        if (p->type == FILTER_FLAT || p->freq <= 0.0f || p->bypass == 1) continue;
-
-        // Calculate X pixel for band center frequency
+    for (int i = 0; i < active_count; i++) {
+        const EqParamPacket *p = &active_p[i];
         float log_f0 = log10f(p->freq);
         int center_x = (int)(((log_f0 - 1.30103f) / 3.0f) * 127.0f);
         if (center_x >= 0 && center_x < OLED_WIDTH) {
-            float gain_db = oled_eval_eq_gain_db(p->freq);
+            float gain_db = oled_eval_eq_gain_db(p->freq, active_f, active_p, active_count);
             int center_y = y_zero - (int)(gain_db * gain_scale);
             if (center_y < y_top) center_y = y_top;
             if (center_y > y_bot) center_y = y_bot;
@@ -422,15 +425,24 @@ static void oled_draw_inverted_row(uint8_t row, const char *s) {
     }
 }
 
-// Rebuild + push the frame to the display if any line differs from the last
-// rendered one.  Returns true when a flush was issued.
+// Rebuild + push the frame to the display if any line or filter recipe differs.
 static bool oled_render_auto(void) {
     char prev[OLED_PAGES][OLED_WIDTH / 6 + 1];
+    static uint32_t prev_eq_hash = 0;
     memcpy(prev, oled_frame, sizeof(prev));
     oled_build_frame();
 
-    bool changed = memcmp(prev, oled_frame, sizeof(prev)) != 0;
+    // Fast hash check of active channel filter recipes to detect EQ changes
+    uint32_t current_eq_hash = 5381;
+    uint8_t *rec_bytes = (uint8_t*)&filter_recipes[oled_eq_channel];
+    for (size_t i = 0; i < sizeof(filter_recipes[oled_eq_channel]); i++) {
+        current_eq_hash = ((current_eq_hash << 5) + current_eq_hash) + rec_bytes[i];
+    }
+
+    bool changed = (memcmp(prev, oled_frame, sizeof(prev)) != 0) || (current_eq_hash != prev_eq_hash);
     if (!changed) return false;
+
+    prev_eq_hash = current_eq_hash;
 
     ssd1306_clear(&oled_disp);
 
