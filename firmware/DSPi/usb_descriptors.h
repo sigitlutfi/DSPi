@@ -36,7 +36,10 @@
 // (per-input EQ/metering, wire V16 / slot V21).
 // 0x0203 → 0x0204 for the manufacturer/product rename to RYNLABS (forces
 // Windows to re-read the cached descriptors instead of showing the old name).
-#define USB_BCD_DEVICE  0x0204
+// 0x0204 → 0x0205 for the output-terminal change to Headphone (0x0302) so
+// Windows shows "Headphone (RYNLABS DSPi)" and does not keep the cached
+// "Speaker" label from the previous descriptor.
+#define USB_BCD_DEVICE  0x0205
 
 // ----------------------------------------------------------------------------
 // ENDPOINT ADDRESSES

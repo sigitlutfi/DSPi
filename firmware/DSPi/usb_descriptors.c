@@ -81,7 +81,7 @@ static const tusb_desc_device_t device_descriptor = {
 //  26  AC CS header                                    (9 bytes)
 //  35  AC CS input terminal (ID 1, USB streaming)      (12 bytes)
 //  47  AC CS feature unit (ID 2, mute+volume master)   (10 bytes)
-//  57  AC CS output terminal (ID 3, speaker)           (9 bytes)
+//  57  AC CS output terminal (ID 3, headphones)        (9 bytes)
 //  66  AS std interface alt 0 (zero-bw)                (9 bytes)
 //  75  AS std interface alt 1 (16-bit)                 (9 bytes)
 //  84  AS CS general (wFormatTag=PCM)                  (7 bytes)
@@ -290,12 +290,16 @@ const uint8_t usb_config_descriptor[] = {
 #endif
     0x00,                               // iFeature
 
-    // --- 57: AC CS output terminal (ID 3, speaker) -----------------------
+    // --- 57: AC CS output terminal (ID 3, headphones) --------------------
+    // wTerminalType = Headphone (0x0302) so Windows labels the endpoint
+    // "Headphone (RYNLABS DSPi)" instead of "Speaker (…)".  The Output
+    // Terminal descriptor is still 9 bytes; only the two terminal-type bytes
+    // change, so no downstream offset shifts.
     9,                                  // bLength
     TUSB_DESC_CS_INTERFACE,             // bDescriptorType
     AUDIO_CS_AC_INTERFACE_OUTPUT_TERMINAL, // bDescriptorSubtype (0x03)
     UAC1_OUTPUT_TERMINAL_ID,            // bTerminalID
-    U16_TO_U8S_LE(AUDIO_TERM_TYPE_OUT_GENERIC_SPEAKER),  // wTerminalType (0x0301)
+    U16_TO_U8S_LE(AUDIO_TERM_TYPE_OUT_HEADPHONES),  // wTerminalType (0x0302)
     0x00,                               // bAssocTerminal
     UAC1_FEATURE_UNIT_ID,               // bSourceID
     0x00,                               // iTerminal
