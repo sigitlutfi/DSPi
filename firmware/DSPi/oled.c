@@ -125,11 +125,6 @@ static int oled_eq_page_count(void) {
     return p < 1 ? 1 : p;
 }
 
-// Total slideshow pages: EQ band pages followed by the effects status page.
-static int oled_page_count(void) {
-    return oled_eq_page_count() + 1;
-}
-
 // Rows 2..7 for the effects status page.  One line per DSP effect: name,
 // ON/OFF and a short parameter summary so a glance shows the live state.
 // `position`/`total` are the slideshow page position shown in the header.
@@ -193,14 +188,20 @@ static void oled_build_fx_rows(int position, int total) {
         oled_frame[r][0] = '\0';
 }
 
+// Total slideshow pages: EQ Curve page (0) + EQ band pages (1..n) + DSP effects page (last).
+static int oled_page_count(void) {
+    return 1 + oled_eq_page_count() + 1;
+}
+
 // Build the 8 display lines for the current page into oled_frame[].
 static void oled_build_frame(void) {
     char buf[OLED_WIDTH / 6 + 1];
     int n_active = oled_count_active_bands();
     int n_eq = oled_eq_page_count();
+    int total_pages = oled_page_count();
 
-    // Clamp the page index to the total slideshow (EQ pages + effects page).
-    if (oled_page_idx >= oled_page_count())
+    // Clamp the page index
+    if (oled_page_idx >= total_pages)
         oled_page_idx = 0;
 
     // Rows 0..1: title + source, rate + volume / mute (shared by all pages).
@@ -213,21 +214,30 @@ static void oled_build_frame(void) {
                  buf, (double)master_volume_db);
     }
 
-    // Effects status page: always the last slideshow page.
-    if (oled_page_idx >= n_eq) {
-        oled_build_fx_rows(oled_page_idx + 1, oled_page_count());
+    // Page 0: EQ Curve Graph (Header row 2 used for Curve title)
+    if (oled_page_idx == 0) {
+        char ch_name[PRESET_NAME_LEN];
+        get_default_channel_name(oled_eq_channel, active_input_source, NULL, ch_name);
+        snprintf(oled_frame[2], sizeof(oled_frame[2]), "CURVE %s (1/%d)", ch_name, total_pages);
+        for (int r = 3; r < OLED_PAGES; r++) oled_frame[r][0] = '\0';
         return;
     }
 
-    // EQ page: header + this page's slice of the non-flat bands.
+    // Last Page: DSP Effects Status Page
+    if (oled_page_idx == total_pages - 1) {
+        oled_build_fx_rows(oled_page_idx + 1, total_pages);
+        return;
+    }
+
+    // Page 1..n_eq: EQ Text Bands Pages
+    int eq_sub_page = oled_page_idx - 1;
     char ch_name[PRESET_NAME_LEN];
     get_default_channel_name(oled_eq_channel, active_input_source, NULL, ch_name);
     snprintf(oled_frame[2], sizeof(oled_frame[2]), "EQ %s (%d) %d/%d",
-             ch_name, n_active, oled_page_idx + 1, n_eq);
+             ch_name, n_active, oled_page_idx + 1, total_pages);
 
-    // Rows 3..7: this page's slice of the non-flat bands.
     int r = 3;
-    int first = oled_page_idx * OLED_PAGE_BANDS;
+    int first = eq_sub_page * OLED_PAGE_BANDS;
     int last  = first + OLED_PAGE_BANDS;
     for (int b = 0; b < MAX_BANDS && r < OLED_PAGES; b++) {
         if (b < first || b >= last) continue;
@@ -240,6 +250,149 @@ static void oled_build_frame(void) {
     }
     for (; r < OLED_PAGES; r++)
         oled_frame[r][0] = '\0';
+}
+
+#include <math.h>
+
+// Calculate exact biquad frequency response magnitude in dB at frequency f_hz
+static float oled_eval_eq_gain_db(float f_hz) {
+    if (f_hz <= 0.0f) return 0.0f;
+    float total_db = 0.0f;
+    float fs = audio_state.freq > 0 ? (float)audio_state.freq : 48000.0f;
+    float w0 = 2.0f * (float)M_PI * f_hz / fs;
+    float cos_w = cosf(w0);
+    float cos_2w = cosf(2.0f * w0);
+    float sin_w = sinf(w0);
+    float sin_2w = sinf(2.0f * w0);
+
+    for (int b = 0; b < MAX_BANDS; b++) {
+        const EqParamPacket *p = &filter_recipes[oled_eq_channel][b];
+        if (p->type == FILTER_FLAT || p->freq <= 0.0f || p->bypass == 1) continue;
+
+        // Compute exact magnitude response from biquad filter coefficients
+        Filter f;
+        dsp_compute_coefficients((EqParamPacket*)p, &f, fs);
+        if (f.bypass) continue;
+
+#if PICO_RP2350
+        float b0 = f.b0, b1 = f.b1, b2 = f.b2;
+        float a1 = f.a1, a2 = f.a2;
+#else
+        // Q28 fixed-point to float conversion for RP2040
+        float b0 = (float)f.b0 / (float)(1 << FILTER_SHIFT);
+        float b1 = (float)f.b1 / (float)(1 << FILTER_SHIFT);
+        float b2 = (float)f.b2 / (float)(1 << FILTER_SHIFT);
+        float a1 = (float)f.a1 / (float)(1 << FILTER_SHIFT);
+        float a2 = (float)f.a2 / (float)(1 << FILTER_SHIFT);
+#endif
+
+        // H(z) = (b0 + b1*z^-1 + b2*z^-2) / (1 + a1*z^-1 + a2*z^-2)
+        // Real & Imaginary parts evaluated at z = e^(j*w)
+        float num_r = b0 + b1 * cos_w + b2 * cos_2w;
+        float num_i = -(b1 * sin_w + b2 * sin_2w);
+        float den_r = 1.0f + a1 * cos_w + a2 * cos_2w;
+        float den_i = -(a1 * sin_w + a2 * sin_2w);
+
+        float num_sq = num_r * num_r + num_i * num_i;
+        float den_sq = den_r * den_r + den_i * den_i;
+
+        if (den_sq > 1e-12f && num_sq > 1e-12f) {
+            float mag_sq = num_sq / den_sq;
+            total_db += 10.0f * log10f(mag_sq);
+        }
+    }
+    return total_db;
+}
+
+// Render graphical EQ magnitude response curve into ssd1306 framebuffer.
+static void oled_draw_eq_curve_overlay(ssd1306_t *disp) {
+    // 1. Grid Lines Background (Area Y=22 to Y=55)
+    const int y_top = 22;     // +6dB / +12dB Upper Bound
+    const int y_zero = 39;    // 0dB Center Line
+    const int y_bot = 56;     // -6dB / -12dB Lower Bound
+
+    // Horizontal grid lines (Dotted upper, 0dB baseline, lower)
+    for (int x = 0; x < OLED_WIDTH; x += 3) {
+        ssd1306_draw_pixel(disp, x, y_top);
+        ssd1306_draw_pixel(disp, x, y_zero);
+        ssd1306_draw_pixel(disp, x, y_bot);
+    }
+
+    // Vertical grid lines (100Hz, 1kHz, 10kHz)
+    const int x_100hz = 30;
+    const int x_1khz  = 72;
+    const int x_10khz = 114;
+
+    for (int y = y_top; y <= y_bot; y += 3) {
+        ssd1306_draw_pixel(disp, x_100hz, y);
+        ssd1306_draw_pixel(disp, x_1khz, y);
+        ssd1306_draw_pixel(disp, x_10khz, y);
+    }
+
+    // 2. Plot EQ Response Curve & Dynamic Visual Gain Boost
+    // Visual Gain Multiplier = 2.83px/dB (maps ±6dB full-height for prominent visible waves)
+    const float gain_scale = 2.833f;
+
+    int prev_y = y_zero;
+    for (int x = 0; x < OLED_WIDTH; x++) {
+        // Logarithmic scale mapping: 20Hz (x=0) -> 20kHz (x=127)
+        float log_f = 1.30103f + ((float)x / 127.0f) * 3.0f;
+        float f_hz = powf(10.0f, log_f);
+
+        float gain_db = oled_eval_eq_gain_db(f_hz);
+
+        // Map gain_db to Y pixels
+        int y = y_zero - (int)(gain_db * gain_scale);
+        if (y < y_top) y = y_top;
+        if (y > y_bot) y = y_bot;
+
+        // Draw solid curve line
+        if (x == 0) {
+            ssd1306_draw_pixel(disp, x, y);
+        } else {
+            ssd1306_draw_line(disp, x - 1, prev_y, x, y);
+        }
+
+        // Add vertical fill under active peaks
+        if (x % 2 == 0) {
+            if (y < y_zero) {
+                for (int fill_y = y + 1; fill_y < y_zero; fill_y += 2) {
+                    ssd1306_draw_pixel(disp, x, fill_y);
+                }
+            } else if (y > y_zero) {
+                for (int fill_y = y_zero + 1; fill_y < y; fill_y += 2) {
+                    ssd1306_draw_pixel(disp, x, fill_y);
+                }
+            }
+        }
+
+        prev_y = y;
+    }
+
+    // 3. Mark Active PEQ Center Points (Dots on the curve for each active band)
+    for (int b = 0; b < MAX_BANDS; b++) {
+        const EqParamPacket *p = &filter_recipes[oled_eq_channel][b];
+        if (p->type == FILTER_FLAT || p->freq <= 0.0f || p->bypass == 1) continue;
+
+        // Calculate X pixel for band center frequency
+        float log_f0 = log10f(p->freq);
+        int center_x = (int)(((log_f0 - 1.30103f) / 3.0f) * 127.0f);
+        if (center_x >= 0 && center_x < OLED_WIDTH) {
+            float gain_db = oled_eval_eq_gain_db(p->freq);
+            int center_y = y_zero - (int)(gain_db * gain_scale);
+            if (center_y < y_top) center_y = y_top;
+            if (center_y > y_bot) center_y = y_bot;
+
+            // Draw a small 3x3 dot marker on the band center
+            ssd1306_draw_square(disp, center_x > 0 ? center_x - 1 : 0, center_y > y_top ? center_y - 1 : y_top, 3, 3);
+        }
+    }
+
+    // 4. Bottom Frequency Axis Labels (Row 7, Y=57)
+    ssd1306_draw_string(disp, 0, 57, 1, "20");
+    ssd1306_draw_string(disp, 22, 57, 1, "100");
+    ssd1306_draw_string(disp, 64, 57, 1, "1k");
+    ssd1306_draw_string(disp, 100, 57, 1, "10k");
 }
 
 // Render `s` as black text on a filled white bar covering page `row`.
@@ -280,13 +433,27 @@ static bool oled_render_auto(void) {
     if (!changed) return false;
 
     ssd1306_clear(&oled_disp);
-    for (int i = 0; i < OLED_PAGES; i++) {
-        if (oled_frame[i][0] == '\0') continue;
-        if (i == 0)
-            oled_draw_inverted_row(0, oled_frame[0]);
-        else
-            ssd1306_draw_string(&oled_disp, 0, i * 8, 1, oled_frame[i]);
+
+    // Row 0 is always top Inverted Header
+    if (oled_frame[0][0] != '\0') {
+        oled_draw_inverted_row(0, oled_frame[0]);
     }
+    // Row 1 is rate / volume / mute
+    if (oled_frame[1][0] != '\0') {
+        ssd1306_draw_string(&oled_disp, 0, 8, 1, oled_frame[1]);
+    }
+
+    // If Page 0, draw smooth continuous EQ Magnitude Curve in lower area
+    if (oled_page_idx == 0) {
+        oled_draw_eq_curve_overlay(&oled_disp);
+    } else {
+        // Normal text rows for remaining pages
+        for (int i = 2; i < OLED_PAGES; i++) {
+            if (oled_frame[i][0] == '\0') continue;
+            ssd1306_draw_string(&oled_disp, 0, i * 8, 1, oled_frame[i]);
+        }
+    }
+
     ssd1306_show(&oled_disp);
     return true;
 }
