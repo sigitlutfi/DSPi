@@ -209,9 +209,18 @@ static void oled_build_frame(void) {
     if (user_mute || audio_state.mute) {
         snprintf(oled_frame[1], sizeof(oled_frame[1]), "MUTE");
     } else {
-        oled_format_rate(audio_state.freq, buf, sizeof(buf));
-        snprintf(oled_frame[1], sizeof(oled_frame[1]), "%s %+.1fdB",
-                 buf, (double)master_volume_db);
+        // STATIC RATE CLAIM: always advertise 96 kHz / 24-bit on the OLED,
+        // regardless of the rate actually applied to the pipeline.  Deliberate
+        // cosmetic lie so the OLED matches what Android reports for the device
+        // (its descriptor advertises up to 96000 Hz / 24-bit).
+        //
+        // To revert to the real applied rate, uncomment the two lines below and
+        // delete the static snprintf:
+        //   oled_format_rate(audio_state.freq, buf, sizeof(buf));
+        //   snprintf(oled_frame[1], sizeof(oled_frame[1]), "%s %+.1fdB",
+        //            buf, (double)master_volume_db);
+        snprintf(oled_frame[1], sizeof(oled_frame[1]), "96 kHz 24 bit %+.1fdB",
+                 (double)master_volume_db);
     }
 
     // Page 0: EQ Curve Graph (Header row 2 used for Curve title)
