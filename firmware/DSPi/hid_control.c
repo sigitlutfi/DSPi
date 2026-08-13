@@ -27,6 +27,13 @@
  *   0x50..0x67  DSP effects    crossfeed / loudness / psybass / leveller
  *                              (v2 block, see rynlabs_dspi_hid_protocol_spec_v2.md)
  *                              global - NOT scoped by register 0x40 channel select
+ *   0x80..0x87  presets        slot select / directory / active / name chunks /
+ *                              action / startup (v3 block, see
+ *                              rynlabs_dspi_hid_protocol_spec_v2.md §8.8).  Names are
+ *                              32 bytes and ride the 4-byte payload in chunks; the
+ *                              chunk index (0..7) lives in frame byte 1 and is
+ *                              echoed back in reply byte 1.  Global - NOT scoped by
+ *                              register 0x40 channel select.
  */
 
 #include <string.h>
@@ -56,6 +63,18 @@
 #define HID_REG_EFF_BASE    0x50   // v2 DSP effects block (crossfeed .. leveller)
 #define HID_REG_EFF_LAST    0x67
 
+// --- Preset block (registers 0x80..0x87, v3) ---
+#define HID_REG_PRESET_SLOT    0x80   // R/W byte: slot select 0..PRESET_SLOTS-1
+#define HID_REG_PRESET_DIR_A   0x81   // R 4B: occupied u16 LE + startup + default_slot
+#define HID_REG_PRESET_DIR_B   0x82   // R 4B: last_active + oc_mode + mv_mode
+#define HID_REG_PRESET_ACTIVE  0x83   // R 1B: currently active slot
+#define HID_REG_PRESET_NAME    0x84   // R 4B: name chunk (frame byte 1 = chunk 0..7)
+#define HID_REG_PRESET_NAME_W  0x85   // W 4B: name chunk -> scratch (byte 1 = chunk)
+#define HID_REG_PRESET_ACTION  0x86   // W 1B: 1=SAVE 2=LOAD 3=DELETE 4=APPLY_NAME
+#define HID_REG_PRESET_STARTUP 0x87   // R/W 2B: [mode, default_slot] (R adds last_active)
+
+#define HID_PRESET_CHUNKS      (PRESET_NAME_LEN / 4)   // 8 chunks of 4 bytes
+
 // --- Reply status byte ---
 #define HID_STATUS_OK       0x03
 #define HID_STATUS_ERROR    0x00
@@ -75,6 +94,8 @@
 #define HID_REPLY_Q_SLOTS  8
 
 static uint8_t _hid_channel;        // channel select state (register 0x40)
+static uint8_t _hid_preset_slot;    // preset slot select state (register 0x80)
+static char    _hid_preset_name[PRESET_NAME_LEN];   // 32-byte name write scratch (0x85)
 static uint8_t _hid_reply[HID_CONTROL_ITF_BYTE_LEN];   // most-recent reply (GET path)
 static bool    _hid_reply_valid;
 static uint8_t _hid_reply_q[HID_REPLY_Q_SLOTS][HID_CONTROL_ITF_BYTE_LEN];
@@ -435,8 +456,127 @@ static bool hid_eff_read(uint8_t reg, uint8_t *out) {
     return true;
 }
 
+// --- Preset block (registers 0x80..0x87, v3) ---
+// Bridges the 10-slot preset system (REQ_PRESET_*) onto the register file.
+// All registers are GLOBAL — not scoped by the 0x40 channel select.  Names
+// are PRESET_NAME_LEN (32) bytes, so they ride the 4-byte frame payload in
+// chunks indexed by frame byte 1 (echoed back in reply byte 1).  SAVE/LOAD/
+// DELETE are wValue-only SETs that live on the vendor GET path and return a
+// 1-byte status; APPLY_NAME pushes the buffered 32-byte name through the SET
+// path.  The vendor LOAD/SAVE/DELETE responses are fire-and-forget
+// "accepted": the main loop defers the flash work, so the host confirms a
+// LOAD by polling 0x83 and a SAVE/DELETE by re-reading 0x81.
+
+static bool hid_reg_write_preset_slot(const uint8_t *p) {
+    if (p[0] >= PRESET_SLOTS) return false;
+    _hid_preset_slot = p[0];
+    return true;
+}
+
+static bool hid_reg_read_preset_slot(uint8_t *out) {
+    out[0] = _hid_preset_slot;
+    out[1] = out[2] = out[3] = 0;
+    return true;
+}
+
+// Directory bytes 0..3: occupied slot bitmask (u16 LE), startup_mode,
+// default_slot.
+static bool hid_reg_read_preset_dir_a(uint8_t *out) {
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    if (!hid_get_dispatch(REQ_PRESET_GET_DIR, 0, 7, &rd, &rl) || rl < 7)
+        return false;
+    memcpy(out, rd, 4);
+    return true;
+}
+
+// Directory bytes 4..6: last_active_slot, output_config_mode,
+// master_volume_mode.
+static bool hid_reg_read_preset_dir_b(uint8_t *out) {
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    if (!hid_get_dispatch(REQ_PRESET_GET_DIR, 0, 7, &rd, &rl) || rl < 7)
+        return false;
+    out[0] = rd[4];
+    out[1] = rd[5];
+    out[2] = rd[6];
+    out[3] = 0;
+    return true;
+}
+
+static bool hid_reg_read_preset_active(uint8_t *out) {
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    if (!hid_get_dispatch(REQ_PRESET_GET_ACTIVE, 0, 1, &rd, &rl) || rl < 1)
+        return false;
+    out[0] = rd[0];
+    out[1] = out[2] = out[3] = 0;
+    return true;
+}
+
+// Return one 4-byte chunk of the selected slot's name.  The chunk index
+// (0..7) comes from frame byte 1 and selects the quarter of the 32-byte name.
+static bool hid_reg_read_preset_name(uint8_t chunk, uint8_t *out) {
+    if (_hid_preset_slot >= PRESET_SLOTS || chunk >= HID_PRESET_CHUNKS)
+        return false;
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    if (!hid_get_dispatch(REQ_PRESET_GET_NAME, _hid_preset_slot,
+                          PRESET_NAME_LEN, &rd, &rl) || rl < PRESET_NAME_LEN)
+        return false;
+    memcpy(out, rd + (uint16_t)chunk * 4, 4);
+    return true;
+}
+
+// Buffer one 4-byte chunk of the name to write (0x85); the assembled 32-byte
+// name is committed to the selected slot via the 0x86 APPLY_NAME action.
+static bool hid_reg_write_preset_name(uint8_t chunk, const uint8_t *p) {
+    if (_hid_preset_slot >= PRESET_SLOTS || chunk >= HID_PRESET_CHUNKS)
+        return false;
+    memcpy(_hid_preset_name + (uint16_t)chunk * 4, p, 4);
+    return true;
+}
+
+static bool hid_reg_write_preset_action(const uint8_t *p) {
+    if (_hid_preset_slot >= PRESET_SLOTS)
+        return false;
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    switch (p[0]) {
+        case 0x01:  // SAVE selected slot (deferred to main loop)
+            return hid_get_dispatch(REQ_PRESET_SAVE, _hid_preset_slot, 1, &rd, &rl)
+                   && rl >= 1 && rd[0] == PRESET_OK;
+        case 0x02:  // LOAD selected slot (deferred; poll 0x83 to confirm)
+            return hid_get_dispatch(REQ_PRESET_LOAD, _hid_preset_slot, 1, &rd, &rl)
+                   && rl >= 1 && rd[0] == PRESET_OK;
+        case 0x03:  // DELETE selected slot (deferred; re-read 0x81 to confirm)
+            return hid_get_dispatch(REQ_PRESET_DELETE, _hid_preset_slot, 1, &rd, &rl)
+                   && rl >= 1 && rd[0] == PRESET_OK;
+        case 0x04:  // APPLY buffered name to the selected slot
+            return hid_set_dispatch(REQ_PRESET_SET_NAME, _hid_preset_slot,
+                                    (const uint8_t *)_hid_preset_name,
+                                    PRESET_NAME_LEN);
+        default:
+            return false;
+    }
+}
+
+static bool hid_reg_write_preset_startup(const uint8_t *p) {
+    return hid_set_dispatch(REQ_PRESET_SET_STARTUP, 0, p, 2);
+}
+
+static bool hid_reg_read_preset_startup(uint8_t *out) {
+    const uint8_t *rd = NULL;
+    uint16_t rl = 0;
+    if (!hid_get_dispatch(REQ_PRESET_GET_STARTUP, 0, 3, &rd, &rl) || rl < 3)
+        return false;
+    memcpy(out, rd, 3);
+    out[3] = 0;
+    return true;
+}
+
 // --- Frame handling ---
-static bool hid_reg_read(uint8_t reg, uint8_t *out) {
+static bool hid_reg_read(uint8_t reg, uint8_t sub, uint8_t *out) {
     if (reg == HID_REG_EQ_ENABLE)
         return hid_reg_read_eq_enable(out);
     if (reg >= HID_REG_BAND_BASE && reg <= HID_REG_BAND_MAX)
@@ -452,10 +592,21 @@ static bool hid_reg_read(uint8_t reg, uint8_t *out) {
         return hid_reg_read_mute(out);
     if (reg >= HID_REG_EFF_BASE && reg <= HID_REG_EFF_LAST)
         return hid_eff_read(reg, out);
+    if (reg >= HID_REG_PRESET_SLOT && reg <= HID_REG_PRESET_STARTUP) {
+        switch (reg) {
+            case HID_REG_PRESET_SLOT:    return hid_reg_read_preset_slot(out);
+            case HID_REG_PRESET_DIR_A:   return hid_reg_read_preset_dir_a(out);
+            case HID_REG_PRESET_DIR_B:   return hid_reg_read_preset_dir_b(out);
+            case HID_REG_PRESET_ACTIVE:  return hid_reg_read_preset_active(out);
+            case HID_REG_PRESET_NAME:    return hid_reg_read_preset_name(sub, out);
+            case HID_REG_PRESET_STARTUP: return hid_reg_read_preset_startup(out);
+            default:                     return false;
+        }
+    }
     return false;
 }
 
-static bool hid_reg_write(uint8_t reg, const uint8_t *p) {
+static bool hid_reg_write(uint8_t reg, uint8_t sub, const uint8_t *p) {
     if (reg == HID_REG_EQ_ENABLE)
         return hid_reg_write_eq_enable(p);
     if (reg >= HID_REG_BAND_BASE && reg <= HID_REG_BAND_MAX)
@@ -471,6 +622,15 @@ static bool hid_reg_write(uint8_t reg, const uint8_t *p) {
         return hid_reg_write_mute(p);
     if (reg >= HID_REG_EFF_BASE && reg <= HID_REG_EFF_LAST)
         return hid_eff_write(reg, p);
+    if (reg >= HID_REG_PRESET_SLOT && reg <= HID_REG_PRESET_STARTUP) {
+        switch (reg) {
+            case HID_REG_PRESET_SLOT:    return hid_reg_write_preset_slot(p);
+            case HID_REG_PRESET_NAME_W:  return hid_reg_write_preset_name(sub, p);
+            case HID_REG_PRESET_ACTION:  return hid_reg_write_preset_action(p);
+            case HID_REG_PRESET_STARTUP: return hid_reg_write_preset_startup(p);
+            default:                     return false;
+        }
+    }
     return false;
 }
 
@@ -515,7 +675,7 @@ void hid_control_tick(void) {
 
 bool hid_control_process_frame(const uint8_t *frame) {
     uint8_t rep[HID_CONTROL_ITF_BYTE_LEN] = {
-        frame[0], 0x00, 0x00, 0x00,
+        frame[0], frame[1], 0x00, 0x00,
         frame[4], 0x00,
         HID_STATUS_ERROR, 0x00, 0x00, 0x00
     };
@@ -523,10 +683,10 @@ bool hid_control_process_frame(const uint8_t *frame) {
 
     switch (frame[4]) {
         case HID_CMD_READ:
-            ok = hid_reg_read(frame[0], &rep[6]);
+            ok = hid_reg_read(frame[0], frame[1], &rep[6]);
             break;
         case HID_CMD_WRITE:
-            ok = hid_reg_write(frame[0], &frame[6]);
+            ok = hid_reg_write(frame[0], frame[1], &frame[6]);
             if (ok) rep[6] = HID_STATUS_OK;
             break;
         case HID_CMD_COMMIT:

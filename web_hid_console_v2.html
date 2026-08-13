@@ -105,6 +105,7 @@
     .peq .band-no { font-weight: 700; color: var(--accent); }
     .peq code { background: var(--alt); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-size: .68rem; color: var(--gold); }
     .peq tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+    .peq tr.row-active td { background: rgba(52,211,153,.10); box-shadow: inset 3px 0 0 var(--ok); }
 
     .log-box {
       background: #070b14; border: 1px solid var(--line); border-radius: 10px; padding: 10px;
@@ -536,6 +537,65 @@
 
     <div class="card">
       <div class="card-head">
+        <h3>Presets (0x80 – 0x87)</h3>
+        <span class="hint">Slot select (0x80) · Direktori (0x81/0x82) · Active (0x83) · Nama chunk (0x84/0x85) · Aksi (0x86) · Startup (0x87)</span>
+      </div>
+
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <span class="chip" :class="pres.active >= 0 ? 'on' : 'off'" x-text="'Active: slot ' + (pres.active + 1)"></span>
+        <span class="chip" :class="pres.occ ? 'on' : 'off'" x-text="popcount(pres.occ) + ' terisi'"></span>
+        <span class="chip pin" x-text="'Startup: ' + (pres.startupMode === 1 ? 'Last Active' : 'Slot ' + (pres.defaultSlot + 1))"></span>
+        <button class="btn purple sm" x-on:click="pullPresets()" :disabled="busy!==''">Pull Presets</button>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="peq">
+          <thead>
+            <tr><th>Slot</th><th>Nama (maks 31)</th><th>Aksi</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="(s, i) in pres.names" :key="'preset' + i">
+              <tr :class="pres.active === i ? 'row-active' : ''">
+                <td class="band-no" x-text="i + 1"></td>
+                <td>
+                  <div class="slider-row">
+                    <span class="val" x-text="s || '(kosong)'" style="min-width:110px;text-align:left"></span>
+                    <input class="num" type="text" maxlength="31" x-model="pres.names[i]"
+                           :disabled="busy!=='' || !(pres.occ & (1 << i))"
+                           x-on:change="presetRename(i, $event.target.value)">
+                  </div>
+                </td>
+                <td>
+                  <button class="btn sm" x-on:click="presetLoad(i)" :disabled="busy!=='' || !(pres.occ & (1 << i))">Muat</button>
+                  <button class="btn sm" x-on:click="presetSave(i)" :disabled="busy!==''">Simpan</button>
+                  <button class="btn sm sec" x-on:click="presetDelete(i)" :disabled="busy!=='' || !(pres.occ & (1 << i))">Hapus</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="field" style="margin-top:10px">
+        <div class="row"><span>Startup saat boot</span></div>
+        <div class="slider-row" style="grid-template-columns:1fr 1fr;gap:10px">
+          <select x-model.number="pres.startupMode" x-on:change="presetSetStartup()">
+            <option :value="0">0 · Slot spesifik (default)</option>
+            <option :value="1">1 · Last Active</option>
+          </select>
+          <select x-model.number="pres.defaultSlot" x-on:change="presetSetStartup()" :disabled="pres.startupMode === 1">
+            <template x-for="i in 10" :key="'presdef' + i">
+              <option :value="i - 1" x-text="'Slot ' + i"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+
+      <div class="pin"><span class="chip pin">0x84/0x85</span> Nama 32 byte dibaca/ditulis per 4-byte chunk; index chunk di byte 1 frame (di-echo ke reply byte 1). LOAD/SAVE/DELETE diterima asinkron oleh firmware — dikonfirmasi via 0x83 (active) / baca ulang 0x81.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
         <h3>Raw 10-Byte HID Log (Report ID 0x4B = 75)</h3>
         <button class="btn sec sm" x-on:click="logLines = []">Clear Log</button>
       </div>
@@ -615,6 +675,13 @@
         lev: { enable: false, amount: 50, speed: 0, maxgain: 15, look: true, gate: -96 },
         band: Array.from({ length: 10 }, (_, i) => ({ type: 'PK', freq: 100 * (i + 1), gain: 0, q: 1.41 })),
         chips: { crossfeed: false, loudness: false, psybass: false, leveller: false },
+        pres: {
+          occ: 0,               // occupied slot bitmask (0x81, u16 LE)
+          active: -1,           // currently active slot (0x83)
+          startupMode: 0,       // 0 = default slot, 1 = last active
+          defaultSlot: 0,
+          names: Array.from({ length: 10 }, () => '')
+        },
 
         init() {
           if (!navigator.hid) {
@@ -676,7 +743,7 @@
           dev.addEventListener('inputreport', (ev) => {
             const data = new Uint8Array(ev.data.buffer);
             this.log('RX 0x' + ev.reportId.toString(16) + ': ' + this.toHex(data), 'rx');
-            const i = this.pending.findIndex(p => p.reg === data[0] && p.cmd === data[4]);
+            const i = this.pending.findIndex(p => p.reg === data[0] && p.cmd === data[4] && p.sub === data[1]);
             if (i !== -1) {
               const p = this.pending.splice(i, 1)[0];
               clearTimeout(p.t);
@@ -689,14 +756,14 @@
           if (!this.device || !this.device.opened) throw new Error('Perangkat tidak terhubung');
           this.log('TX : ' + this.toHex(pkt), 'tx');
           if (!wantReply) { await this.device.sendReport(this.REPORT_ID, pkt); return null; }
-          const reg = pkt[0], cmd = pkt[4];
+          const reg = pkt[0], cmd = pkt[4], sub = pkt[1];
           const res = new Promise((resolve, reject) => {
             const t = setTimeout(() => {
               const j = this.pending.findIndex(p => p.resolve === resolve);
               if (j !== -1) this.pending.splice(j, 1);
               reject(new Error('Timeout 0x' + reg.toString(16) + '/0x' + cmd.toString(16)));
             }, timeoutMs);
-            this.pending.push({ reg, cmd, resolve, reject, t });
+            this.pending.push({ reg, cmd, sub, resolve, reject, t });
           });
           await this.device.sendReport(this.REPORT_ID, pkt);
           return res;
@@ -724,6 +791,14 @@
           return new Uint8Array([reg, 0, 0, 0, this.CMD_WRITE, 0, qv & 0xFF, (qv >> 8) & 0xFF, type, 0]);
         },
         commitPkt() { return new Uint8Array([0, 0, 0, 0, this.CMD_COMMIT, 0, 0, 0, 0, 0]); },
+
+        // --- Preset block (0x80–0x87, v3) ---
+        // Name chunks ride frame byte 1 (sub-index 0..7); the firmware echoes
+        // it back in reply byte 1 so replies can be matched per chunk.
+        nameReadPkt(k) { return new Uint8Array([0x84, k & 0x07, 0, 0, this.CMD_READ, 0, 0, 0, 0, 0]); },
+        nameWritePkt(k, b0, b1, b2, b3) { return new Uint8Array([0x85, k & 0x07, 0, 0, this.CMD_WRITE, 0, b0, b1, b2, b3]); },
+        actionPkt(code) { return this.bytePkt(0x86, code); },
+        startupPkt(mode, slot) { return this.u16Pkt(0x87, ((slot & 0xFF) << 8) | (mode & 0xFF)); },
 
         async writeReg(reg, v) {
           let pkt;
@@ -955,6 +1030,7 @@
             await this.pullGlobal();
             await this.pullBands();
             for (const n of ['crossfeed', 'loudness', 'psybass', 'leveller']) await this.pullBlock(n);
+            await this.pullPresets();
             this.log('Full pull selesai.', 'ok');
           } catch (e) {
             this.log('pullAll gagal: ' + e.message, 'err');
@@ -1026,6 +1102,139 @@
           this.writeBand(i)
             .then(() => this.verifyBand(i))
             .catch(e => this.log('Band ' + (i + 1) + ' gagal: ' + e.message, 'err'));
+        },
+
+        // --- Presets (0x80–0x87, v3) ---
+        popcount(n) {
+          let c = 0;
+          while (n) { c += n & 1; n >>>= 1; }
+          return c;
+        },
+
+        // Read the 32-byte name of a slot as 8 × 4-byte chunks.  Trims at the
+        // first NUL (firmware zero-fills the tail of the name field).
+        async readPresetName(slot) {
+          await this.writeReg(0x80, slot);
+          const bytes = [];
+          for (let k = 0; k < 8; k++) {
+            const r = await this._send(this.nameReadPkt(k));
+            bytes.push(r[6], r[7], r[8], r[9]);
+            await this.delay(10);
+          }
+          let end = bytes.indexOf(0);
+          if (end === -1) end = bytes.length;
+          return bytes.slice(0, end).map(b => String.fromCharCode(b)).join('');
+        },
+
+        async pullPresets() {
+          if (!this.requireDevice()) return;
+          this.busy = 'presets';
+          try {
+            const rA = await this._send(this.readPkt(0x81));
+            const rAct = await this._send(this.readPkt(0x83));
+            this.pres.occ = rA[6] | (rA[7] << 8);
+            this.pres.startupMode = rA[8];
+            this.pres.defaultSlot = rA[9];
+            this.pres.active = rAct[6];
+            for (let s = 0; s < 10; s++) {
+              if (this.pres.occ & (1 << s)) this.pres.names[s] = await this.readPresetName(s);
+              else this.pres.names[s] = '';
+            }
+            this.log('Presets: ' + this.popcount(this.pres.occ) + ' terisi, aktif slot ' + (this.pres.active + 1)
+              + ', startup ' + (this.pres.startupMode === 1 ? 'Last Active' : 'Slot ' + (this.pres.defaultSlot + 1)) + '.', 'ok');
+          } catch (e) {
+            this.log('pullPresets gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async presetLoad(slot) {
+          if (!this.requireDevice()) return;
+          this.busy = 'preset' + slot;
+          try {
+            await this.writeReg(0x80, slot);
+            await this.writeReg(0x86, 0x02);   // LOAD (deferred in firmware)
+            const deadline = Date.now() + 3000;
+            let active = -1;
+            while (Date.now() < deadline) {
+              await this.delay(50);
+              active = await this.readReg(0x83);
+              if (active === slot) break;
+            }
+            this.pres.active = active;
+            if (active === slot) this.log('Preset slot ' + (slot + 1) + ' dimuat.', 'ok');
+            else this.log('LOAD slot ' + (slot + 1) + ' tidak terkonfirmasi (active=' + active + ').', 'warn');
+          } catch (e) {
+            this.log('Load preset gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async presetSave(slot) {
+          if (!this.requireDevice()) return;
+          this.busy = 'preset' + slot;
+          try {
+            await this.writeReg(0x80, slot);
+            await this.writeReg(0x86, 0x01);   // SAVE (deferred)
+            this.log('State DSP disimpan ke slot ' + (slot + 1) + '.', 'ok');
+            await this.pullPresets();
+          } catch (e) {
+            this.log('Save preset gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async presetDelete(slot) {
+          if (!this.requireDevice()) return;
+          this.busy = 'preset' + slot;
+          try {
+            await this.writeReg(0x80, slot);
+            await this.writeReg(0x86, 0x03);   // DELETE (deferred)
+            this.log('Preset slot ' + (slot + 1) + ' dihapus.', 'ok');
+            await this.pullPresets();
+          } catch (e) {
+            this.log('Hapus preset gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        // Write a 32-byte name via 8 × 4-byte chunks then APPLY_NAME (0x86/4).
+        async presetRename(slot, name) {
+          if (!this.requireDevice()) return;
+          const bytes = [];
+          for (let i = 0; i < Math.min(32, name.length); i++) bytes.push(name.charCodeAt(i) & 0xFF);
+          while (bytes.length < 32) bytes.push(0);
+          this.busy = 'preset' + slot;
+          try {
+            await this.writeReg(0x80, slot);
+            for (let k = 0; k < 8; k++) {
+              await this._send(this.nameWritePkt(k, bytes[k * 4], bytes[k * 4 + 1], bytes[k * 4 + 2], bytes[k * 4 + 3]));
+              await this.delay(10);
+            }
+            await this.writeReg(0x86, 0x04);   // APPLY_NAME
+            this.pres.names[slot] = name.slice(0, 31);
+            this.log('Nama preset slot ' + (slot + 1) + ' = "' + this.pres.names[slot] + '".', 'ok');
+          } catch (e) {
+            this.log('Rename preset gagal: ' + e.message, 'err');
+          } finally {
+            this.busy = '';
+          }
+        },
+
+        async presetSetStartup() {
+          if (!this.requireDevice()) return;
+          const mode = this.pres.startupMode ? 1 : 0;
+          const slot = this.clampNum(this.pres.defaultSlot, 0, 9);
+          try {
+            await this._send(this.startupPkt(mode, slot));
+            this.log('Startup diatur: ' + (mode === 1 ? 'Last Active' : 'Slot ' + (slot + 1)) + '.', 'ok');
+          } catch (e) {
+            this.log('Set startup gagal: ' + e.message, 'err');
+          }
         },
 
         async commit() {
