@@ -71,6 +71,18 @@ void oled_set_eq_channel(uint8_t ch);
  * this is the way to move between EQ / effects pages. */
 void oled_set_page(uint8_t page);
 
+/* Preset-change flash overlay actions. */
+#define OLED_FLASH_LOADED   0
+#define OLED_FLASH_SAVED    1
+#define OLED_FLASH_DELETED  2
+
+/* Briefly overlay the active-preset slot + name on top of the page content
+ * (rows 2..3) after a load / save / delete.  Row 0 (brand + preset-name tag)
+ * and row 1 (rate/volume) stay visible.  The normal page reappears after
+ * ~2.5 s.  `name` is optional: NULL reads the slot name internally (use a
+ * captured string for DELETE, since preset_delete clears the stored name). */
+void oled_flash_preset(uint8_t slot, uint8_t action, const char *name);
+
 /* Toggle the auto status-screen renderer.  Disabled automatically while
  * oled_text()/oled_clear() own the screen; re-enable with true. */
 void oled_set_auto(bool on);

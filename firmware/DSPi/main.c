@@ -2734,6 +2734,7 @@ int main(void) {
                 // matrix, gains, output_types[]), recalculates filter coefficients,
                 // transitions Core 1 mode, and writes the directory to flash.
                 preset_load(pending_preset_load_slot);
+                oled_flash_preset(pending_preset_load_slot, OLED_FLASH_LOADED, NULL);
 
                 // SPDIF RX restart is deferred until after process_type_switches
                 // (or the no-type-change branch) below.  Restarting here would
@@ -2872,6 +2873,8 @@ int main(void) {
                 if (status != PRESET_OK) {
                     printf("preset_save failed: slot=%u err=%u\n",
                            (unsigned)pending_preset_save_slot, (unsigned)status);
+                } else {
+                    oled_flash_preset(pending_preset_save_slot, OLED_FLASH_SAVED, NULL);
                 }
             }
 
@@ -2897,7 +2900,11 @@ int main(void) {
                 prepare_flash_write_operation();
                 for (int slot = 0; slot < PRESET_SLOTS; slot++) {
                     if (mask & (1u << slot)) {
+                        char del_name[PRESET_NAME_LEN];
+                        // Capture before preset_delete clears the stored name.
+                        preset_get_name(slot, del_name);
                         preset_delete(slot);
+                        oled_flash_preset(slot, OLED_FLASH_DELETED, del_name);
                     }
                 }
 

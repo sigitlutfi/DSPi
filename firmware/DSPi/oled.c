@@ -13,7 +13,8 @@
  * effects page is always the last page, so the page index is
  * decoupled from the EQ band slice index (see oled_build_frame()).
  *
- *   row 0  "DSPi <source>"          USB / SPDIF / I2S / ADAT (inverted bar)
+ *   row 0  "RYNLABS DSPi"      brand (inverted bar, left) + active preset
+ *                              name flush right (truncated; "P<n>" fallback)
  *   row 1  "<rate>  <vol dB|MUTE>"  44.1k / 48.0k / 96.0k, master volume
  *   row 2  "EQ <channel> (N) p/q"   channel name + active band count + page
  *   row 3.. "<band> <type> <f> <g>"  up to 5 non-flat bands per page
@@ -54,6 +55,7 @@ extern const uint8_t font_8x5[];
 #include "audio_input.h"
 #include "usb_audio.h"
 #include "dsp_pipeline.h"
+#include "flash_storage.h"  // preset_get_active() for the header preset tag
 
 // Bands shown per EQ page (rows 3..7 = 5 rows).
 #define OLED_PAGE_BANDS     5u
@@ -61,20 +63,19 @@ extern const uint8_t font_8x5[];
 static ssd1306_t oled_disp;
 static bool oled_auto = true;       // auto slideshow on
 static char oled_frame[OLED_PAGES][OLED_WIDTH / 6 + 1];  // last rendered lines
+static char oled_preset_tag[12] = "";  // header right-aligned text (name or "P<n>")
 static uint8_t oled_eq_channel = 0;
 static uint8_t oled_page_idx = 0;   // current slideshow page
 static absolute_time_t oled_next_page;
 static absolute_time_t oled_next_flush;
 
-static const char *oled_source_name(void) {
-    switch (active_input_source) {
-        case INPUT_SOURCE_USB:    return "USB";
-        case INPUT_SOURCE_SPDIF:  return "SPDIF";
-        case INPUT_SOURCE_I2S:    return "I2S";
-        case INPUT_SOURCE_ADAT:   return "ADAT";
-        default:                  return "SPDIF";
-    }
-}
+// Preset-change flash overlay (see oled_flash_preset()).
+#define OLED_FLASH_MS 2500u
+static bool oled_flash_active = false;
+static bool oled_flash_dirty = false;
+static absolute_time_t oled_flash_until;
+static char oled_flash_l1[OLED_WIDTH / 6 + 1];  // "LOADED P3" / "SAVED P3" / ...
+static char oled_flash_l2[OLED_WIDTH / 6 + 1];  // preset name (<= 21 chars)
 
 static void oled_format_rate(uint32_t hz, char *buf, size_t n) {
     if (hz >= 100000u)      snprintf(buf, n, "%dk", (int)(hz / 1000u));
@@ -193,6 +194,32 @@ static int oled_page_count(void) {
     return 1 + oled_eq_page_count() + 1;
 }
 
+// Row 0 header: brand text on the left, active preset name on the right.
+// The name is truncated to the number of characters that fit after the brand
+// (so a long name can never overlap it), and falls back to "P<n>" when the
+// active slot has no name.
+static void oled_build_header(void) {
+    static const char brand[] = "RYNLABS DSPi";
+    const uint8_t slot = preset_get_active();
+    snprintf(oled_frame[0], sizeof(oled_frame[0]), "%s", brand);
+
+    const size_t cw = font_8x5[1] + font_8x5[2];
+    size_t max_r = (OLED_WIDTH - strlen(brand) * cw) / cw;
+    if (max_r > sizeof(oled_preset_tag) - 1u)
+        max_r = sizeof(oled_preset_tag) - 1u;
+
+    char name[PRESET_NAME_LEN] = "";
+    if (preset_get_name(slot, name) != PRESET_OK)
+        name[0] = '\0';
+    if (name[0] == '\0') {
+        snprintf(oled_preset_tag, sizeof(oled_preset_tag), "P%u",
+                 (unsigned)(slot + 1u));
+    } else {
+        name[max_r] = '\0';
+        snprintf(oled_preset_tag, sizeof(oled_preset_tag), "%s", name);
+    }
+}
+
 // Build the 8 display lines for the current page into oled_frame[].
 static void oled_build_frame(void) {
     char buf[OLED_WIDTH / 6 + 1];
@@ -205,7 +232,10 @@ static void oled_build_frame(void) {
         oled_page_idx = 0;
 
     // Rows 0..1: title + source, rate + volume / mute (shared by all pages).
-    snprintf(oled_frame[0], sizeof(oled_frame[0]), "DSPi %s", oled_source_name());
+    // Row 0 header is fixed brand text; the active preset name rides on the
+    // right edge, truncated to fit (see oled_build_header).  The input source
+    // is not shown on the OLED.
+    oled_build_header();
     if (user_mute || audio_state.mute) {
         snprintf(oled_frame[1], sizeof(oled_frame[1]), "MUTE");
     } else {
@@ -407,16 +437,18 @@ static void oled_draw_eq_curve_overlay(ssd1306_t *disp) {
     ssd1306_draw_string(disp, 100, 57, 1, "10k");
 }
 
-// Render `s` as black text on a filled white bar covering page `row`.
+// Render `left` as black text on a filled white bar covering page `row`,
+// with `right` black text flush against the right edge of the bar.
 // Gives the slideshow title row a distinct header look (white bar with
 // black glyphs) versus the normal content rows below.  Walks the same
 // font_8x5 glyph layout as ssd1306_draw_char but clears the glyph pixels
 // instead of setting them, over a row-wide white bar.
-static void oled_draw_inverted_row(uint8_t row, const char *s) {
+static void oled_draw_inverted_row(uint8_t row, const char *left, const char *right) {
     const uint32_t y = row * 8u;
     ssd1306_draw_square(&oled_disp, 0, y, OLED_WIDTH, 8);
+
     uint32_t x = 0;
-    for (const char *p = s; *p; p++) {
+    for (const char *p = left; *p; p++) {
         uint8_t c = (uint8_t)*p;
         if (c < font_8x5[3] || c > font_8x5[4]) {
             x += font_8x5[1] + font_8x5[2];
@@ -432,13 +464,36 @@ static void oled_draw_inverted_row(uint8_t row, const char *s) {
         }
         x += font_8x5[1] + font_8x5[2];
     }
+
+    if (right && right[0]) {
+        const uint32_t cw = font_8x5[1] + font_8x5[2];
+        x = OLED_WIDTH - (uint32_t)strlen(right) * cw;
+        for (const char *p = right; *p; p++) {
+            uint8_t c = (uint8_t)*p;
+            if (c < font_8x5[3] || c > font_8x5[4]) {
+                x += cw;
+                continue;
+            }
+            const uint8_t *g = &font_8x5[5 + (c - font_8x5[3]) * font_8x5[1]];
+            for (uint32_t w = 0; w < font_8x5[1]; w++) {
+                uint8_t line = g[w];
+                for (int8_t j = 0; j < 8; j++, line >>= 1) {
+                    if (line & 1)
+                        ssd1306_clear_pixel(&oled_disp, x + w, y + j);
+                }
+            }
+            x += cw;
+        }
+    }
 }
 
 // Rebuild + push the frame to the display if any line or filter recipe differs.
 static bool oled_render_auto(void) {
     char prev[OLED_PAGES][OLED_WIDTH / 6 + 1];
+    char prev_tag[sizeof(oled_preset_tag)];
     static uint32_t prev_eq_hash = 0;
     memcpy(prev, oled_frame, sizeof(prev));
+    memcpy(prev_tag, oled_preset_tag, sizeof(prev_tag));
     oled_build_frame();
 
     // Fast hash check of active channel filter recipes to detect EQ changes
@@ -448,22 +503,46 @@ static bool oled_render_auto(void) {
         current_eq_hash = ((current_eq_hash << 5) + current_eq_hash) + rec_bytes[i];
     }
 
-    bool changed = (memcmp(prev, oled_frame, sizeof(prev)) != 0) || (current_eq_hash != prev_eq_hash);
+    // Preset flash overlay lifecycle: show it exactly once when armed
+    // (oled_flash_dirty), then force one final redraw when it expires so the
+    // normal page content reappears without waiting for another change.
+    bool flash_active  = oled_flash_active && !time_reached(oled_flash_until);
+    bool flash_expired = oled_flash_active && time_reached(oled_flash_until);
+    if (flash_expired) {
+        oled_flash_active = false;
+        oled_flash_l1[0] = '\0';
+        oled_flash_l2[0] = '\0';
+    }
+
+    bool changed = (memcmp(prev, oled_frame, sizeof(prev)) != 0)
+                   || (memcmp(prev_tag, oled_preset_tag, sizeof(prev_tag)) != 0)
+                   || (current_eq_hash != prev_eq_hash)
+                   || oled_flash_dirty || flash_expired;
+    oled_flash_dirty = false;
     if (!changed) return false;
 
     prev_eq_hash = current_eq_hash;
 
     ssd1306_clear(&oled_disp);
 
-    // Row 0 is always top Inverted Header
+    // Row 0 is always top Inverted Header (brand left, preset tag right).
     if (oled_frame[0][0] != '\0') {
-        oled_draw_inverted_row(0, oled_frame[0]);
+        oled_draw_inverted_row(0, oled_frame[0], oled_preset_tag);
     }
     // Row 1 is rate / volume / mute
     if (oled_frame[1][0] != '\0') {
         ssd1306_draw_string(&oled_disp, 0, 8, 1, oled_frame[1]);
     }
 
+    // Preset-change flash overlay: briefly show action + name over the page
+    // content (rows 2..3), then fall through to the normal page once the
+    // timer expires (flash_expired forces this redraw).
+    if (flash_active) {
+        if (oled_flash_l1[0] != '\0')
+            ssd1306_draw_string(&oled_disp, 0, 16, 1, oled_flash_l1);
+        if (oled_flash_l2[0] != '\0')
+            ssd1306_draw_string(&oled_disp, 0, 24, 1, oled_flash_l2);
+    } else
     // If Page 0, draw smooth continuous EQ Magnitude Curve in lower area
     if (oled_page_idx == 0) {
         oled_draw_eq_curve_overlay(&oled_disp);
@@ -534,6 +613,28 @@ void oled_set_eq_channel(uint8_t ch) {
 
 void oled_set_page(uint8_t page) {
     oled_page_idx = page;
+}
+
+void oled_flash_preset(uint8_t slot, uint8_t action, const char *name) {
+    static const char *const label[3] = { "LOADED", "SAVED", "DELETED" };
+    if (!oled_auto) return;
+    if (slot >= PRESET_SLOTS) slot = preset_get_active();
+    if (action > OLED_FLASH_DELETED) action = OLED_FLASH_LOADED;
+
+    char namebuf[PRESET_NAME_LEN] = "";
+    if (name == NULL) {
+        if (preset_get_name(slot, namebuf) != PRESET_OK) namebuf[0] = '\0';
+        name = namebuf;
+    }
+    if (name[0] == '\0') name = "(unnamed)";
+
+    snprintf(oled_flash_l1, sizeof(oled_flash_l1), "%s P%u", label[action],
+             (unsigned)(slot + 1u));
+    snprintf(oled_flash_l2, sizeof(oled_flash_l2), "%s", name);
+    oled_flash_active = true;
+    oled_flash_dirty = true;
+    oled_flash_until = make_timeout_time_ms(OLED_FLASH_MS);
+    oled_next_flush = make_timeout_time_ms(0);   // render at the next tick
 }
 
 void oled_set_auto(bool on) {
