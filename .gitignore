@@ -17,6 +17,7 @@ firmware/build_release/*
 firmware/eclipse_build/*
 /pico-sdk
 /build
+/build-rp2040-loopback/
 .vscode
 
 # Python bytecode cache (from tools/)

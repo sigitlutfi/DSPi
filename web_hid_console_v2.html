@@ -119,6 +119,20 @@
     .log-entry.err { color: var(--err); }
     .log-entry.info { color: var(--accent); }
     .muted { color: var(--mut); font-size: .78rem; }
+
+    /* --- RTA Live --- */
+    .rta-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .rta-tools select { width: auto; max-width: 300px; }
+    .rta-tools .switch-label { gap: 5px; }
+    input[type=checkbox] { accent-color: var(--accent); cursor: pointer; }
+    .mini-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+    .rta-sep { width: 1px; height: 20px; background: var(--line); }
+    .rta-canvas-wrap { margin-top: 10px; }
+    .rta-canvas-wrap canvas { display: block; width: 100%; height: 300px; background: #070b14; border: 1px solid var(--line); border-radius: 10px; }
+    .rta-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .75rem; color: var(--mut); margin-top: 6px; }
+    .rta-legend .sw { display: inline-flex; align-items: center; gap: 5px; }
+    .rta-legend .sw i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+    .rta-note { font-size: .72rem; color: var(--mut); margin-top: 6px; }
   </style>
 </head>
 <body x-data="dspiApp()" x-cloak>
@@ -280,6 +294,65 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div class="card rta-card">
+      <div class="card-head">
+        <h3>RTA Live — Loopback Capture (slot 0)</h3>
+        <span class="hint">Membutuhkan firmware build DSPI_LOOPBACK · capture = output post-DSP (pre-DAC) · stereo L/R 24-bit</span>
+      </div>
+
+      <div class="rta-tools">
+        <button class="btn" x-on:click="startRta()" :disabled="rta.running || rta.busy" x-show="!rta.running"
+                x-text="rta.busy ? 'Minta izin mic…' : '▶ Start RTA'"></button>
+        <button class="btn sec" x-on:click="stopRta()" :disabled="!rta.running" x-show="rta.running">■ Stop</button>
+
+        <select x-model="rta.deviceId" x-on:change="rtaDeviceChanged()" :disabled="rta.running">
+          <option value="">— Auto-detect DSPi —</option>
+          <template x-for="d in rta.devices" :key="d.deviceId">
+            <option :value="d.deviceId" x-text="d.label"></option>
+          </template>
+        </select>
+        <button class="btn sec sm" x-on:click="rtaRefresh()" :disabled="rta.running" title="Refresh daftar device">↻</button>
+
+        <label class="switch-label"><input type="checkbox" x-model="rta.showL"><span class="mini-swatch" style="background:#22d3ee"></span>L</label>
+        <label class="switch-label"><input type="checkbox" x-model="rta.showR"><span class="mini-swatch" style="background:#fbbf24"></span>R</label>
+        <label class="switch-label"><input type="checkbox" x-model="rta.peakHold">Peak hold</label>
+        <label class="switch-label"><input type="checkbox" x-model="rta.freeze">Freeze</label>
+        <label class="switch-label"><input type="checkbox" x-model="rta.showTarget">Target PEQ</label>
+        <label class="switch-label"><input type="checkbox" x-model="rta.showMeasured" :disabled="!rta.hasMeasured">Kurva hasil</label>
+        <button class="btn sec sm" x-on:click="clearMeasured()" :disabled="!rta.hasMeasured" title="Hapus kurva hasil" x-show="rta.hasMeasured">✕</button>
+
+        <span class="rta-sep"></span>
+        <button class="btn" x-on:click="sweepStart()" :disabled="rta.sweepRunning || rta.busy" x-show="!rta.sweepRunning">↷ Sweep 20–20k</button>
+        <button class="btn sec sm" x-on:click="sweepStop()" :disabled="!rta.sweepRunning" x-show="rta.sweepRunning">■ Stop Sweep</button>
+
+        <span class="rta-sep"></span>
+        <button class="btn sec" x-on:click="rtaToneToggle()" :disabled="rta.busy"
+                x-text="rta.toneOn ? '■ Stop Tone' : '♩ Tone 1k'"></button>
+        <select x-on:change="rtaToneLevel($event)" :disabled="!rta.toneOn" style="width:auto">
+          <option value="0" :selected="rta.toneDb === 0">0 dBFS</option>
+          <option value="-3" :selected="rta.toneDb === -3">-3 dBFS</option>
+          <option value="-6" :selected="rta.toneDb === -6">-6 dBFS</option>
+          <option value="-12" :selected="rta.toneDb === -12">-12 dBFS</option>
+        </select>
+        <button class="btn sec sm" x-on:click="rtaCalibrate()" :disabled="rta.busy"
+                title="Rekam level saat tone 0 dBFS berbunyi sebagai referensi 0 dBFS">⤫ Kalibrasi 0 dB</button>
+        <button class="btn sec sm" x-on:click="rtaCalClear()" :disabled="rta.cal == null" x-show="rta.cal != null"
+                title="Hapus garis referensi">✕</button>
+      </div>
+
+      <div class="rta-canvas-wrap">
+        <canvas x-ref="rtaCanvas"></canvas>
+      </div>
+
+      <div class="rta-legend">
+        <span class="sw"><i style="background:#22d3ee"></i>L</span>
+        <span class="sw"><i style="background:#fbbf24"></i>R</span>
+        <span class="sw"><i style="background:#f1f5f9"></i>Target PEQ (putus-putus)</span>
+        <span class="sw"><i style="background:#4ade80"></i>Kurva hasil sweep</span>
+      </div>
+      <div class="rta-note" x-text="rtaStatusText()"></div>
     </div>
 
     <div class="card">
@@ -613,6 +686,17 @@
   </div>
 
   <script>
+    // RTA private state — deliberately NOT in the Alpine data object so the
+    // per-frame hot path (rAF -> AnalyserNode -> canvas) never touches a
+    // reactive proxy.
+    const RTA_PRIV = {
+      stream: null, actx: null, src: null, split: null,
+      an: [null, null], buf: [null, null], peak: [null, null],
+      raf: 0, fft: 4096, minDb: -90, maxDb: 12,
+      sweepCtx: null, sweepSrc: null, curSrc: null, measureAbort: false,
+      toneCtx: null, toneOsc: null, toneGain: null,
+    };
+
     function dspiApp() {
       return {
         REPORT_ID: 0x4B,
@@ -683,10 +767,517 @@
           names: Array.from({ length: 10 }, () => '')
         },
 
+        rta: {
+          running: false, busy: false, err: '',
+          devices: [], deviceId: '', label: '', fs: 0,
+          showL: true, showR: true, peakHold: false, freeze: false, showTarget: false,
+          measured: [], hasMeasured: false, measuring: false, showMeasured: false,
+          sweepRunning: false, toneOn: false, toneDb: 0, cal: null
+        },
+
         init() {
           if (!navigator.hid) {
             this.log('WebHID tidak tersedia — butuh Chrome/Edge + secure context (file:// atau https).', 'err');
           }
+          this.rtaRefresh();
+        },
+
+        // --- RTA Live (loopback capture, getUserMedia) ---
+        async rtaRefresh() {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+            this.rta.err = 'mediaDevices tidak tersedia — buka via http://localhost (bukan file://).';
+            return;
+          }
+          try {
+            const list = await navigator.mediaDevices.enumerateDevices();
+            const ins = list.filter(d => d.kind === 'audioinput');
+            this.rta.devices = ins.map(d => ({ deviceId: d.deviceId, label: d.label || '(belum diberi izin — klik Start)' }));
+            const dspi = ins.find(d => /dspi|weeb|pico/i.test(d.label));
+            if (dspi && !this.rta.deviceId) this.rta.deviceId = dspi.deviceId;
+            this.rta.err = ins.length ? '' : 'Tidak ada audio input terdeteksi.';
+          } catch (e) {
+            this.rta.err = 'enumerateDevices: ' + e.message;
+          }
+        },
+
+        async startRta() {
+          if (this.rta.running) return;
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            this.rta.err = 'getUserMedia tidak tersedia — buka via http://localhost:8000 (bukan file://) di Chrome/Edge.';
+            return;
+          }
+          this.rta.busy = true;
+          this.rta.err = '';
+          try {
+            const strict = { echoCancellation: { exact: false }, noiseSuppression: { exact: false }, autoGainControl: { exact: false }, channelCount: 2 };
+            const loose = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 };
+            const sel = this.rta.deviceId ? { deviceId: { exact: this.rta.deviceId } } : {};
+            let stream;
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({ audio: { ...sel, ...strict } });
+            } catch (e1) {
+              this.log('Capture raw ditolak (' + e1.name + ') — AGC/EC/NS browser mungkin aktif; lanjut tanpa constraint ketat.', 'warn');
+              stream = await navigator.mediaDevices.getUserMedia({ audio: { ...sel, ...loose } });
+            }
+            RTA_PRIV.stream = stream;
+            const AC = window.AudioContext || window.webkitAudioContext;
+            const actx = new AC();
+            await actx.resume();
+            RTA_PRIV.actx = actx;
+            RTA_PRIV.src = actx.createMediaStreamSource(stream);
+            RTA_PRIV.split = actx.createChannelSplitter(2);
+            RTA_PRIV.src.connect(RTA_PRIV.split);   // src out 0 -> split in 0
+            for (let ch = 0; ch < 2; ch++) {
+              const an = actx.createAnalyser();
+              an.fftSize = RTA_PRIV.fft;
+              an.smoothingTimeConstant = 0.2;
+              an.minDecibels = RTA_PRIV.minDb;
+              an.maxDecibels = RTA_PRIV.maxDb;
+              RTA_PRIV.split.connect(an, ch, 0);   // split out ch -> analyser in 0
+              RTA_PRIV.an[ch] = an;
+              RTA_PRIV.buf[ch] = new Uint8Array(an.frequencyBinCount);
+              RTA_PRIV.peak[ch] = new Float32Array(an.frequencyBinCount);
+            }
+            this.rta.fs = actx.sampleRate;
+            this.rta.label = (stream.getAudioTracks()[0] || {}).label || '';
+            this.rta.running = true;
+            this.rtaRefresh();
+            this.rtaTick();
+            this.log('RTA start: ' + (this.rta.label || 'audio input') + ' @ ' + this.rta.fs + ' Hz (stereo).', 'ok');
+          } catch (e) {
+            this.rta.err = 'Gagal buka mic: ' + e.message;
+            this.log(this.rta.err, 'err');
+            this.stopRta();
+          } finally {
+            this.rta.busy = false;
+          }
+        },
+
+        stopRta() {
+          this.rtaToneStop();
+          if (RTA_PRIV.raf) { cancelAnimationFrame(RTA_PRIV.raf); RTA_PRIV.raf = 0; }
+          if (RTA_PRIV.stream) { RTA_PRIV.stream.getTracks().forEach(t => t.stop()); RTA_PRIV.stream = null; }
+          if (RTA_PRIV.actx) { try { RTA_PRIV.actx.close(); } catch (e) { } RTA_PRIV.actx = null; }
+          RTA_PRIV.src = null; RTA_PRIV.split = null; RTA_PRIV.an = [null, null];
+          this.rta.running = false;
+          this.rta.fs = 0;
+        },
+
+        async sweepStart() {
+          if (this.rta.sweepRunning || this.rta.busy) return;
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) { this.rta.err = 'AudioContext tidak tersedia di browser ini.'; return; }
+          if (!this.rta.running) await this.startRta();
+          if (!this.rta.running) { this.rta.err = 'Mulai RTA dulu (tombol Start RTA) — butuh izin mic.'; return; }
+          this.rta.busy = true;
+          this.rta.err = '';
+          this.rta.measured = [];
+          this.rta.hasMeasured = false;
+          this.rta.measuring = true;
+          this.rta.showMeasured = true;
+          this.rta.sweepRunning = true;
+          try {
+            const ctx = new AC({ sampleRate: 48000 });
+            await ctx.resume();
+            if (ctx.setSinkId) {
+              try {
+                const outs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
+                const dspiOut = outs.find(d => /dspi|weeb|pico/i.test(d.label));
+                if (dspiOut) await ctx.setSinkId(dspiOut.deviceId);
+              } catch (e) { /* fall back to default output */ }
+            }
+            const sr = ctx.sampleRate;
+            const amp = 0.5;
+            const freqs = [];
+            for (let i = 0; i <= 72; i++) freqs.push(20 * Math.pow(1000, i / 72));
+            this.log('Ukur respons: ' + freqs.length + ' titik stepped sine (20 Hz–20 kHz). Kurva sedang direkam…', 'ok');
+            if (this.rta.cal != null && isFinite(this.rta.cal)) this.log('Kalibrasi aktif: kurva hasil absolut (sweep dimainkan -6 dBFS), relatif ke garis 0 dBFS.', 'ok');
+            RTA_PRIV.measureAbort = false;
+            for (let idx = 0; idx < freqs.length; idx++) {
+              if (RTA_PRIV.measureAbort) break;
+              const f = freqs[idx];
+              const dwell = Math.max(0.15, 6 / f);          // ≥6 siklus, minimal 150 ms
+              const n = Math.round(sr * dwell);
+              const buf = ctx.createBuffer(2, n, sr);
+              const fadeN = Math.max(1, Math.round(0.01 * sr));
+              for (let ch = 0; ch < 2; ch++) {
+                const d = buf.getChannelData(ch);
+                for (let i = 0; i < n; i++) {
+                  const env = Math.min(1, i / fadeN, (n - 1 - i) / fadeN);
+                  d[i] = amp * Math.sin(2 * Math.PI * f * i / sr) * Math.max(0, env);
+                }
+              }
+              const src = ctx.createBufferSource();
+              src.buffer = buf;
+              src.connect(ctx.destination);
+              src.start();
+              RTA_PRIV.curSrc = src;
+              const best = await this.measureDuring(f, dwell * 1000 - 40);
+              try { src.stop(); } catch (e) { }
+              RTA_PRIV.curSrc = null;
+              this.rta.measured.push({ f, db: best });
+              if (idx % 3 === 0 || idx === freqs.length - 1) this.drawRta();
+            }
+            try { await ctx.close(); } catch (e) { }
+            RTA_PRIV.sweepCtx = null;
+            RTA_PRIV.sweepSrc = null;
+          } catch (e) {
+            this.rta.err = 'Gagal ukur: ' + e.message;
+            this.log(this.rta.err, 'err');
+          } finally {
+            this.rta.measuring = false;
+            this.rta.hasMeasured = true;
+            this.rta.sweepRunning = false;
+            this.rta.busy = false;
+            this.log('Kurva respons selesai: ' + this.rta.measured.length + ' titik. Bandingkan dengan Target PEQ.', 'ok');
+          }
+        },
+
+        measureDuring(f, ms) {
+          return new Promise(res => {
+            const t0 = performance.now();
+            let best = -Infinity;
+            const tick = () => {
+              const db = this.readBinDb(f);
+              if (db > best) best = db;
+              if (performance.now() - t0 < ms && !RTA_PRIV.measureAbort) setTimeout(tick, 30);
+              else res(best === -Infinity ? RTA_PRIV.minDb : best);
+            };
+            tick();
+          });
+        },
+
+        readBinDb(f) {
+          const b = RTA_PRIV.buf[0];
+          if (!b || !b.length) return -Infinity;
+          const fs = this.rta.fs || 48000;
+          const bin = Math.round(f / (fs / RTA_PRIV.fft));
+          const i0 = Math.max(0, bin - 1), i1 = Math.min(b.length - 1, bin + 1);
+          let v = 0;
+          for (let i = i0; i <= i1; i++) if (b[i] > v) v = b[i];
+          return RTA_PRIV.minDb + (v / 255) * (RTA_PRIV.maxDb - RTA_PRIV.minDb);
+        },
+
+        sweepStop() {
+          RTA_PRIV.measureAbort = true;
+          if (RTA_PRIV.curSrc) { try { RTA_PRIV.curSrc.stop(); } catch (e) { } RTA_PRIV.curSrc = null; }
+          if (RTA_PRIV.sweepCtx) { try { RTA_PRIV.sweepCtx.close(); } catch (e) { } RTA_PRIV.sweepCtx = null; }
+          this.rta.sweepRunning = false;
+          this.rta.measuring = false;
+          this.rta.hasMeasured = true;
+        },
+
+        clearMeasured() {
+          this.rta.measured = [];
+          this.rta.hasMeasured = false;
+          this.rta.showMeasured = false;
+        },
+
+        // --- Tone referensi 1 kHz (ceiling 0 dBFS) ---
+        async rtaToneToggle() {
+          if (this.rta.toneOn) { this.rtaToneStop(); return; }
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) { this.rta.err = 'AudioContext tidak tersedia.'; return; }
+          if (!this.rta.running) await this.startRta();
+          if (!this.rta.running) { this.rta.err = 'Mulai RTA dulu — butuh izin mic.'; return; }
+          this.rta.busy = true;
+          this.rta.err = '';
+          try {
+            const ctx = new AC({ sampleRate: 48000 });
+            await ctx.resume();
+            let outLabel = 'output default';
+            if (ctx.setSinkId) {
+              try {
+                const outs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
+                const dspiOut = outs.find(d => /dspi|weeb|pico/i.test(d.label));
+                if (dspiOut) { await ctx.setSinkId(dspiOut.deviceId); outLabel = dspiOut.label; }
+              } catch (e) { /* fallback ke output default */ }
+            }
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.value = 1000;
+            const gain = ctx.createGain();
+            gain.gain.value = this.rta.toneDb === 0 ? 1.0 : Math.pow(10, this.rta.toneDb / 20);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            RTA_PRIV.toneCtx = ctx; RTA_PRIV.toneOsc = osc; RTA_PRIV.toneGain = gain;
+            this.rta.toneOn = true;
+            this.log('Tone 1 kHz ' + this.rta.toneDb + ' dBFS → ' + outLabel + '. Jika RTA tak bereaksi, set output default ke DSPi.', 'ok');
+          } catch (e) {
+            this.rta.err = 'Gagal start tone: ' + e.message;
+            this.log(this.rta.err, 'err');
+          } finally {
+            this.rta.busy = false;
+          }
+        },
+
+        rtaToneLevel(ev) {
+          this.rta.toneDb = parseFloat(ev.target.value);
+          if (RTA_PRIV.toneGain && RTA_PRIV.toneCtx) {
+            const v = this.rta.toneDb === 0 ? 1.0 : Math.pow(10, this.rta.toneDb / 20);
+            RTA_PRIV.toneGain.gain.setTargetAtTime(v, RTA_PRIV.toneCtx.currentTime, 0.02);
+          }
+        },
+
+        rtaToneStop() {
+          if (RTA_PRIV.toneOsc) { try { RTA_PRIV.toneOsc.stop(); } catch (e) { } RTA_PRIV.toneOsc = null; }
+          if (RTA_PRIV.toneCtx) { try { RTA_PRIV.toneCtx.close(); } catch (e) { } RTA_PRIV.toneCtx = null; }
+          RTA_PRIV.toneGain = null;
+          this.rta.toneOn = false;
+        },
+
+        async rtaCalibrate() {
+          if (!this.rta.running) { this.rta.err = 'Start RTA dulu, lalu nyalakan tone 0 dBFS.'; return; }
+          if (!this.rta.toneOn) this.log('Tips: nyalakan tone pada 0 dBFS dulu agar kalibrasi tepat.', 'warn');
+          this.rta.busy = true;
+          this.rta.err = '';
+          try {
+            let bestByte = 0;
+            const t0 = performance.now();
+            while (performance.now() - t0 < 600) {
+              for (let ch = 0; ch < 2; ch++) {
+                const b = RTA_PRIV.buf[ch];
+                if (!b || !b.length) continue;
+                for (let i = 0; i < b.length; i++) if (b[i] > bestByte) bestByte = b[i];
+              }
+              await new Promise(r => setTimeout(r, 30));
+            }
+            if (bestByte <= 0) throw new Error('tidak ada sinyal terukur — nyalakan tone 0 dBFS.');
+            const db = RTA_PRIV.minDb + (bestByte / 255) * (RTA_PRIV.maxDb - RTA_PRIV.minDb);
+            this.rta.cal = Math.max(-72, Math.min(12, db));
+            this.log('Kalibrasi 0 dBFS: garis referensi di ' + this.rta.cal.toFixed(1) + ' dB. Puncak di garis itu = 0 dBFS.', 'ok');
+          } catch (e) {
+            this.rta.err = 'Kalibrasi gagal: ' + e.message;
+            this.log(this.rta.err, 'err');
+          } finally {
+            this.rta.busy = false;
+          }
+        },
+
+        rtaCalClear() { this.rta.cal = null; },
+
+        measuredDbAt(f) {
+          const m = this.rta.measured;
+          if (!m.length) return null;
+          if (f <= m[0].f) return m[0].db;
+          if (f >= m[m.length - 1].f) return m[m.length - 1].db;
+          for (let i = 0; i < m.length - 1; i++) {
+            if (f >= m[i].f && f <= m[i + 1].f) {
+              const span = m[i + 1].f - m[i].f;
+              const t = span ? (f - m[i].f) / span : 0;
+              return m[i].db + t * (m[i + 1].db - m[i].db);
+            }
+          }
+          return m[m.length - 1].db;
+        },
+
+        async rtaDeviceChanged() {
+          if (this.rta.running) { this.stopRta(); await this.startRta(); }
+        },
+
+        rtaTick() {
+          if (!this.rta.running) return;
+          RTA_PRIV.raf = requestAnimationFrame(() => this.rtaTick());
+          if (!this.rta.freeze) {
+            const p = RTA_PRIV;
+            for (let ch = 0; ch < 2; ch++) if (p.an[ch]) p.an[ch].getByteFrequencyData(p.buf[ch]);
+            for (let ch = 0; ch < 2; ch++) {
+              const b = p.buf[ch], pk = p.peak[ch];
+              for (let i = 0; i < b.length; i++) {
+                if (this.rta.peakHold) { if (b[i] >= pk[i]) pk[i] = b[i]; else pk[i] -= 0.35; }
+                else pk[i] = b[i];
+              }
+            }
+          }
+          this.drawRta();
+        },
+
+        drawRta() {
+          const canvas = this.$refs.rtaCanvas;
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
+          const dpr = window.devicePixelRatio || 1;
+          const cw = canvas.clientWidth || 900, chH = 300;
+          const W = cw * dpr, H = chH * dpr;
+          if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, cw, chH);
+
+          const M = { l: 46, r: 10, t: 8, b: 20 };
+          const pw = cw - M.l - M.r, ph = chH - M.t - M.b;
+          const fmin = 20, fmax = 20000, dbTop = 12;
+          const xOf = f => M.l + (Math.log10(f / fmin) / Math.log10(fmax / fmin)) * pw;
+          const yOf = db => M.t + (1 - (db + 72) / (72 + dbTop)) * ph;
+
+          ctx.font = '9px "Cascadia Code", Consolas, monospace';
+          const fmarks = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+          for (const f of fmarks) {
+            const x = Math.round(xOf(f)) + .5;
+            ctx.strokeStyle = 'rgba(38,48,74,.6)';
+            ctx.beginPath(); ctx.moveTo(x, M.t); ctx.lineTo(x, M.t + ph); ctx.stroke();
+            ctx.fillStyle = '#8ea0b8'; ctx.textAlign = 'center';
+            ctx.fillText(f >= 1000 ? (f / 1000) + 'k' : f, x, M.t + ph + 11);
+          }
+          for (let db = -72; db <= dbTop; db += 12) {
+            const y = Math.round(yOf(db)) + .5;
+            ctx.strokeStyle = db === 0 ? 'rgba(34,211,238,.55)' : 'rgba(38,48,74,.6)';
+            ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(M.l + pw, y); ctx.stroke();
+            ctx.fillStyle = '#8ea0b8'; ctx.textAlign = 'right';
+            ctx.fillText(db + '', M.l - 4, y + 3);
+          }
+
+          const fs = this.rta.fs || 48000;
+          const binHz = fs / RTA_PRIV.fft;
+          const byteToDb = v => RTA_PRIV.minDb + (v / 255) * (RTA_PRIV.maxDb - RTA_PRIV.minDb);
+          const drawCh = (ch, color) => {
+            const b = RTA_PRIV.buf[ch];
+            if (!b) return;
+            const trace = arr => {
+              const isPk = arr === RTA_PRIV.peak[ch];
+              ctx.strokeStyle = color; ctx.lineWidth = isPk ? 1 : 1.4;
+              ctx.globalAlpha = isPk ? .3 : 1;
+              ctx.beginPath();
+              let first = true;
+              for (let px = 0; px <= pw; px++) {
+                const f = fmin * Math.pow(fmax / fmin, px / pw);
+                const db = byteToDb(arr[Math.min(arr.length - 1, Math.max(0, Math.round(f / binHz)))]);
+                const y = yOf(Math.max(-72, Math.min(dbTop, db)));
+                if (first) { ctx.moveTo(M.l + px, y); first = false; }
+                else ctx.lineTo(M.l + px, y);
+              }
+              ctx.stroke();
+              if (!isPk) {
+                ctx.globalAlpha = .07;
+                ctx.fillStyle = color;
+                ctx.lineTo(M.l + pw, M.t + ph); ctx.lineTo(M.l, M.t + ph); ctx.closePath();
+                ctx.fill();
+              }
+              ctx.globalAlpha = 1;
+            };
+            trace(b);
+            if (this.rta.peakHold) trace(RTA_PRIV.peak[ch]);
+          };
+          if (this.rta.showL) drawCh(0, '#22d3ee');
+          if (this.rta.showR) drawCh(1, '#fbbf24');
+
+          if (this.rta.cal != null && isFinite(this.rta.cal)) {
+            const y = Math.round(yOf(this.rta.cal)) + .5;
+            ctx.strokeStyle = 'rgba(244,114,182,.9)';
+            ctx.setLineDash([6, 4]);
+            ctx.lineWidth = 1.4;
+            ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(M.l + pw, y); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#f472b6'; ctx.textAlign = 'left';
+            ctx.fillText('0 dBFS (cal)', M.l + 6, y - 4);
+          }
+
+          if (this.rta.showTarget) {
+            ctx.strokeStyle = 'rgba(241,245,249,.75)';
+            ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            let first = true;
+            for (let px = 0; px <= pw; px++) {
+              const f = fmin * Math.pow(fmax / fmin, px / pw);
+              const y = yOf(Math.max(-72, Math.min(dbTop, this.targetDb(f, fs))));
+              if (first) { ctx.moveTo(M.l + px, y); first = false; }
+              else ctx.lineTo(M.l + px, y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#f1f5f9'; ctx.textAlign = 'left';
+            ctx.fillText('target PEQ', M.l + 6, M.t + 10);
+          }
+
+          if (this.rta.showMeasured && (this.rta.hasMeasured || this.rta.measuring) && this.rta.measured.length) {
+            let off = 0;
+            const abs = this.rta.cal != null && isFinite(this.rta.cal);
+            if (!abs && this.rta.showTarget) {
+              const md = this.measuredDbAt(1000);
+              const td = this.targetDb(1000, fs);
+              if (md != null && isFinite(td)) off = md - td;
+            } else if (!abs) {
+              let mx = -Infinity;
+              for (const pt of this.rta.measured) if (pt.db > mx) mx = pt.db;
+              if (isFinite(mx)) off = mx;
+            }
+            ctx.strokeStyle = '#4ade80';
+            ctx.lineWidth = 1.7;
+            ctx.globalAlpha = .95;
+            ctx.beginPath();
+            let first = true;
+            for (const pt of this.rta.measured) {
+              const x = xOf(Math.max(fmin, Math.min(fmax, pt.f)));
+              const y = yOf(Math.max(-72, Math.min(dbTop, pt.db - off)));
+              if (first) { ctx.moveTo(x, y); first = false; }
+              else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#4ade80'; ctx.textAlign = 'left';
+            ctx.fillText(this.rta.measuring ? 'mengukur…' : ('hasil sweep' + (abs ? ' (absolut @0dBFS)' : (this.rta.showTarget ? ' (align @1k)' : ''))), M.l + 6, M.t + 22);
+          }
+        },
+
+        // RBJ biquad magnitude of the active PEQ chain + preamp (dB at freq f).
+        // Ported from tools/filter_tester/compare_filter.py rbj_coefficients().
+        rbjCoeffs(type, fc, Q, gainDb, fs) {
+          const A = Math.pow(10, gainDb / 40);
+          const w0 = 2 * Math.PI * fc / fs;
+          const cs = Math.cos(w0), sn = Math.sin(w0);
+          const alpha = sn / (2 * Math.max(0.01, Q));
+          const sqA2 = 2 * Math.sqrt(A) * alpha;
+          switch (type) {
+            case 'PK': return [1 + alpha * A, -2 * cs, 1 - alpha * A, 1 + alpha / A, -2 * cs, 1 - alpha / A];
+            case 'LP': return [(1 - cs) * .5, 1 - cs, (1 - cs) * .5, 1 + alpha, -2 * cs, 1 - alpha];
+            case 'HP': return [(1 + cs) * .5, -(1 + cs), (1 + cs) * .5, 1 + alpha, -2 * cs, 1 - alpha];
+            case 'NOTCH': return [1, -2 * cs, 1, 1 + alpha, -2 * cs, 1 - alpha];
+            case 'LSQ': return [A * ((A + 1) - (A - 1) * cs + sqA2), 2 * A * ((A - 1) - (A + 1) * cs), A * ((A + 1) - (A - 1) * cs - sqA2),
+              (A + 1) + (A - 1) * cs + sqA2, -2 * ((A - 1) + (A + 1) * cs), (A + 1) + (A - 1) * cs - sqA2];
+            case 'HSQ': return [A * ((A + 1) + (A - 1) * cs + sqA2), -2 * A * ((A - 1) + (A + 1) * cs), A * ((A + 1) + (A - 1) * cs - sqA2),
+              (A + 1) - (A - 1) * cs + sqA2, 2 * ((A - 1) - (A + 1) * cs), (A + 1) - (A - 1) * cs - sqA2];
+            case 'AP': return [1 - alpha, -2 * cs, 1 + alpha, 1 + alpha, -2 * cs, 1 - alpha];
+            case 'LP1': return [sn, sn, 0, sn + 1 + cs, sn - 1 - cs, 0];
+            case 'HP1': return [1 + cs, -1 - cs, 0, sn + 1 + cs, sn - 1 - cs, 0];
+            case 'LSQ1': return [A * sn + 1 + cs, A * sn - 1 - cs, 0, sn / A + 1 + cs, sn / A - 1 - cs, 0];
+            case 'HSQ1': return [sn + A + A * cs, sn - A - A * cs, 0, sn + 1 / A + cs / A, sn - 1 / A - cs / A, 0];
+            case 'AP1': { const k = 2 * fs, Wc = k * Math.tan(Math.PI * fc / fs); return [Wc - k, Wc + k, 0, Wc + k, Wc - k, 0]; }
+            default: return null; // FLAT / unknown → unity
+          }
+        },
+
+        biquadDb(c, f, fs) {
+          const w = 2 * Math.PI * f / fs;
+          const z1r = Math.cos(w), z1i = -Math.sin(w);
+          const z2r = 2 * z1r * z1r - 1, z2i = 2 * z1r * z1i;
+          const nr = c[0] + c[1] * z1r + c[2] * z2r, ni = c[1] * z1i + c[2] * z2i;
+          const dr = c[3] + c[4] * z1r + c[5] * z2r, di = c[4] * z1i + c[5] * z2i;
+          return 20 * Math.log10(Math.hypot(nr, ni) / Math.hypot(dr, di));
+        },
+
+        targetDb(f, fs) {
+          let db = this.g.preampDb;
+          if (this.g.peqEnabled) {
+            for (let i = 0; i < this.band.length; i++) {
+              const b = this.band[i];
+              if (b.type === 'AP' || b.type === 'AP1' || b.type === 'FLAT') continue; // unity magnitude
+              const c = this.rbjCoeffs(b.type, Math.max(1, b.freq), b.q, b.gain, fs);
+              if (c) db += this.biquadDb(c, f, fs);
+            }
+          }
+          return db;
+        },
+
+        rtaStatusText() {
+          const parts = [];
+          if (this.rta.running) parts.push('Aktif: ' + (this.rta.label || '?') + ' @ ' + this.rta.fs + ' Hz');
+          else if (!this.rta.devices.length) parts.push('Klik Start untuk izin mic → pilih "Weeb Labs DSPi".');
+          else parts.push(this.rta.devices.length + ' audio input terdeteksi.');
+          if (this.rta.sweepRunning) parts.push('Sweep 20–20k berjalan — merekam kurva…');
+          if (this.rta.hasMeasured) parts.push('Kurva hasil: ' + this.rta.measured.length + ' titik (bandingkan dgn Target PEQ).');
+          if (this.rta.err) parts.push('⚠ ' + this.rta.err);
+          parts.push('Butuh build DSPI_LOOPBACK · buka via http://localhost (getUserMedia tidak jalan dari file://)');
+          return parts.join('  ·  ');
         },
 
         delay(ms) { return new Promise(r => setTimeout(r, ms)); },
